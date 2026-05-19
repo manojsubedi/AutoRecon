@@ -1,0 +1,2081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reconciliation · Transaction Cross-Check</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    /* Paper */
+    --bg: #f4eee2;
+    --bg-card: #fffdf7;
+    --bg-soft: #ebe3d0;
+    --bg-deep: #1d2438;
+    --bg-deepest: #14182c;
+
+    /* Ink */
+    --ink: #14130e;
+    --ink-2: #4a4640;
+    --ink-3: #847e72;
+    --ink-4: #b8b2a3;
+
+    /* Rules */
+    --line: #d8d1bd;
+    --line-strong: #b5ad97;
+    --line-deep: #14130e;
+
+    /* Accent */
+    --accent: #1d2438;
+    --accent-soft: rgba(29, 36, 56, 0.06);
+    --highlight: #b8623e;
+    --highlight-soft: rgba(184, 98, 62, 0.08);
+
+    /* Status */
+    --good: #2d5a3a;
+    --good-bg: #dde4d0;
+    --bad: #8b3025;
+    --bad-bg: #f0d6c8;
+    --warn: #8a5a17;
+    --warn-bg: #f2e3c5;
+    --info: #1d4253;
+    --info-bg: #d7e0e4;
+
+    --shadow-sm: 0 1px 0 rgba(26,24,20,0.04);
+    --shadow-md: 0 2px 12px rgba(26,24,20,0.06);
+
+    --radius: 2px;
+    --radius-lg: 4px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
+  .mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum' on; }
+  .serif { font-family: 'Fraunces', serif; }
+  .num { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum' on; text-align: right; }
+
+  /* Masthead */
+  header {
+    background: var(--bg);
+    border-bottom: 3px double var(--line-deep);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .header-inner {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 18px 40px 14px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 32px;
+  }
+  .masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .masthead-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .masthead-eyebrow .vol {
+    color: var(--highlight);
+    font-weight: 600;
+  }
+  .masthead-eyebrow .dot {
+    width: 3px;
+    height: 3px;
+    background: var(--ink-4);
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .masthead h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 400;
+    font-size: 32px;
+    line-height: 1;
+    letter-spacing: -0.025em;
+    font-variation-settings: "opsz" 144;
+    color: var(--ink);
+  }
+  .masthead h1 em {
+    font-style: italic;
+    font-weight: 300;
+  }
+  .masthead-meta {
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    line-height: 1.6;
+  }
+  .masthead-meta strong {
+    color: var(--ink-2);
+    font-weight: 500;
+  }
+  .header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  button, .btn {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 16px;
+    border: 1px solid var(--ink);
+    background: transparent;
+    color: var(--ink);
+    border-radius: 0;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  button:hover, .btn:hover {
+    background: var(--ink);
+    color: var(--bg);
+  }
+  button.primary {
+    background: var(--ink);
+    color: var(--bg);
+    border-color: var(--ink);
+  }
+  button.primary:hover {
+    background: var(--highlight);
+    border-color: var(--highlight);
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  main {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 48px 40px;
+  }
+
+  /* Upload state — editorial hero */
+  .upload-hero {
+    padding: 64px 0 48px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 64px;
+    align-items: center;
+  }
+  .upload-hero-text h1 {
+    font-family: 'Fraunces', serif;
+    font-size: 88px;
+    font-weight: 400;
+    letter-spacing: -0.035em;
+    line-height: 0.92;
+    margin-bottom: 28px;
+    font-variation-settings: "opsz" 144;
+    color: var(--ink);
+  }
+  .upload-hero-text h1 em {
+    font-style: italic;
+    font-weight: 300;
+    color: var(--highlight);
+    display: block;
+  }
+  .upload-hero-text .lede {
+    color: var(--ink-2);
+    font-size: 16px;
+    line-height: 1.65;
+    max-width: 480px;
+    margin-bottom: 32px;
+  }
+  .upload-hero-text .lede strong {
+    color: var(--ink);
+    font-weight: 600;
+    border-bottom: 1px solid var(--ink);
+    padding-bottom: 1px;
+  }
+  .upload-hero-text .byline {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .upload-hero-text .byline span {
+    color: var(--highlight);
+  }
+
+  .dropzone {
+    border: 1px solid var(--ink);
+    border-radius: 0;
+    padding: 56px 32px;
+    background: var(--bg-card);
+    cursor: pointer;
+    transition: all 0.18s ease;
+    position: relative;
+    text-align: center;
+  }
+  .dropzone:hover, .dropzone.dragging {
+    background: var(--ink);
+    color: var(--bg);
+  }
+  .dropzone:hover h3, .dropzone.dragging h3 { color: var(--bg); }
+  .dropzone:hover p, .dropzone.dragging p { color: var(--bg); opacity: 0.85; }
+  .dropzone:hover .dropzone-icon, .dropzone.dragging .dropzone-icon { color: var(--bg); }
+  .dropzone:hover p strong, .dropzone.dragging p strong { color: var(--highlight); }
+  .dropzone-icon {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 24px;
+    color: var(--ink);
+    transition: color 0.18s ease;
+  }
+  .dropzone-icon svg { width: 100%; height: 100%; stroke-width: 1; }
+  .dropzone h3 {
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    font-weight: 400;
+    font-style: italic;
+    margin-bottom: 8px;
+    color: var(--ink);
+    transition: color 0.18s ease;
+  }
+  .dropzone p {
+    color: var(--ink-3);
+    font-size: 12px;
+    margin: 0;
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    transition: color 0.18s ease;
+  }
+  .dropzone p strong { color: var(--highlight); font-weight: 600; }
+  .dropzone input[type=file] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .upload-notes {
+    margin-top: 24px;
+    padding: 18px 22px;
+    background: transparent;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+  }
+  .upload-notes h4 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 12px;
+  }
+  .upload-notes ul {
+    list-style: none;
+    font-size: 13px;
+    color: var(--ink-2);
+    line-height: 1.7;
+  }
+  .upload-notes ul li {
+    padding-left: 20px;
+    position: relative;
+  }
+  .upload-notes ul li:before {
+    content: '§';
+    position: absolute;
+    left: 4px;
+    color: var(--highlight);
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+  }
+  .upload-notes code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    background: var(--bg-soft);
+    padding: 1px 6px;
+    border-radius: 0;
+    color: var(--ink);
+  }
+
+  /* Loading state */
+  .loading {
+    text-align: center;
+    padding: 96px 0;
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--line);
+    border-top-color: var(--ink);
+    border-radius: 50%;
+    margin: 0 auto 20px;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading p {
+    color: var(--ink-3);
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+
+  /* Report: dateline strip */
+  .dateline {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 0 0 24px;
+    margin-bottom: 32px;
+    border-bottom: 1px solid var(--line);
+    gap: 24px;
+  }
+  .dateline .left {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+  .dateline .left strong {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .dateline .right {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+
+  /* Asymmetric editorial KPI hero */
+  .kpi-hero {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr 1fr 1fr;
+    border-top: 1px solid var(--line-deep);
+    border-bottom: 1px solid var(--line-deep);
+    margin-bottom: 56px;
+  }
+  .kpi-hero .kpi {
+    padding: 28px 32px;
+    border-right: 1px solid var(--line);
+    position: relative;
+  }
+  .kpi-hero .kpi:last-child { border-right: none; }
+  .kpi-hero .kpi.primary {
+    background: var(--ink);
+    color: var(--bg);
+    border-right: 1px solid var(--ink);
+    padding: 32px;
+  }
+  .kpi-hero .kpi.primary .kpi-label { color: rgba(244, 238, 226, 0.6); }
+  .kpi-hero .kpi.primary .kpi-sub { color: rgba(244, 238, 226, 0.55); }
+  .kpi-hero .kpi.primary .kpi-value-suffix { color: var(--highlight); }
+
+  .kpi-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    font-weight: 500;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .kpi-label .marker {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    color: var(--highlight);
+    font-size: 12px;
+  }
+  .kpi-value {
+    font-family: 'Fraunces', serif;
+    font-weight: 300;
+    letter-spacing: -0.04em;
+    line-height: 0.95;
+    font-variation-settings: "opsz" 144;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .kpi-hero .kpi .kpi-value { font-size: 44px; }
+  .kpi-hero .kpi.primary .kpi-value { font-size: 88px; }
+  .kpi-value-suffix {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink-3);
+    letter-spacing: 0;
+  }
+  .kpi-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-3);
+    margin-top: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    line-height: 1.5;
+  }
+  .kpi-sub .pos { color: var(--good); }
+  .kpi-sub .neg { color: var(--bad); }
+
+  /* Sections — chapter style */
+  section {
+    margin-bottom: 64px;
+  }
+  .section-head {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: baseline;
+    gap: 24px;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--line-deep);
+  }
+  .section-head .chapter {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--highlight);
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    font-weight: 600;
+  }
+  .section-head h2 {
+    font-family: 'Fraunces', serif;
+    font-size: 32px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    color: var(--ink);
+  }
+  .section-head h2 em {
+    font-style: italic;
+    font-weight: 300;
+  }
+  .section-head .section-meta {
+    color: var(--ink-3);
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    text-align: right;
+  }
+
+  /* Tabs — chapter tabs */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 24px;
+    gap: 0;
+  }
+  .tab {
+    background: none;
+    border: none;
+    padding: 14px 0;
+    margin-right: 32px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-3);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: all 0.12s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    border-radius: 0;
+  }
+  .tab:hover { color: var(--ink); background: transparent; }
+  .tab.active {
+    color: var(--ink);
+    border-bottom-color: var(--ink);
+  }
+  .tab .count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-3);
+    padding: 1px 6px;
+    border-radius: 0;
+    background: transparent;
+    border: 1px solid var(--line-strong);
+    letter-spacing: 0.05em;
+  }
+  .tab.active .count {
+    background: var(--ink);
+    color: var(--bg);
+    border-color: var(--ink);
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Tables — print-grade */
+  .table-wrap {
+    overflow: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 0;
+    max-height: 640px;
+  }
+  table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+  }
+  thead {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+  th {
+    text-align: left;
+    padding: 12px 16px;
+    background: var(--bg-card);
+    font-weight: 500;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--ink-3);
+    border-bottom: 1px solid var(--line-deep);
+    white-space: nowrap;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  th.num { text-align: right; }
+  td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink);
+    vertical-align: top;
+  }
+  tbody tr:hover { background: var(--bg-soft); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* Status pills — flatter, more typographic */
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    border-radius: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border: 1px solid currentColor;
+    line-height: 1.5;
+  }
+  .pill.good { color: var(--good); background: var(--good-bg); }
+  .pill.bad { color: var(--bad); background: var(--bad-bg); }
+  .pill.warn { color: var(--warn); background: var(--warn-bg); }
+  .pill.info { color: var(--info); background: var(--info-bg); }
+  .pill.neutral { color: var(--ink-3); background: var(--bg-soft); border-color: var(--line-strong); }
+  .check { color: var(--good); font-weight: 600; font-size: 14px; }
+  .x { color: var(--bad); font-weight: 600; font-size: 14px; }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .filter-bar input {
+    flex: 1;
+    max-width: 360px;
+    padding: 9px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 0;
+    font-family: inherit;
+    font-size: 13px;
+    background: var(--bg-card);
+    color: var(--ink);
+  }
+  .filter-bar input:focus {
+    outline: none;
+    border-color: var(--ink);
+  }
+  .filter-bar select {
+    padding: 9px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 0;
+    font-family: inherit;
+    font-size: 13px;
+    background: var(--bg-card);
+    cursor: pointer;
+    color: var(--ink);
+  }
+  .filter-bar select:focus { outline: none; border-color: var(--ink); }
+
+  /* Data quality cards — editorial brief cards */
+  .dq-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 16px;
+  }
+  .dq-card {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 0;
+    padding: 22px 24px;
+    border-top: 2px solid var(--highlight);
+  }
+  .dq-card h4 {
+    font-family: 'Fraunces', serif;
+    font-size: 17px;
+    font-weight: 500;
+    margin-bottom: 10px;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+  }
+  .dq-card .where {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-3);
+    margin-bottom: 14px;
+    display: block;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .dq-card .rec {
+    font-size: 13px;
+    color: var(--ink-2);
+    line-height: 1.6;
+  }
+
+  /* Error state */
+  .error-box {
+    background: var(--bad-bg);
+    color: var(--bad);
+    padding: 18px 22px;
+    border: 1px solid var(--bad);
+    border-radius: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 16px 0;
+  }
+  .error-box strong {
+    display: block;
+    margin-bottom: 4px;
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 16px;
+  }
+
+  .hidden { display: none !important; }
+
+  /* Merchant summary — editorial table */
+  .summary-table { font-size: 13px; }
+  .summary-table tfoot td {
+    font-weight: 600;
+    background: var(--ink);
+    color: var(--bg);
+    border-top: 1px solid var(--ink);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .summary-table tfoot td.num { font-family: 'JetBrains Mono', monospace; }
+
+  /* Variance help — sidebar style */
+  .variance-help {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 0;
+    padding: 24px 28px;
+    margin-bottom: 24px;
+    border-left: 3px solid var(--highlight);
+  }
+  .vh-formula {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    margin-bottom: 14px;
+    color: var(--ink-2);
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .vh-formula .vh-label {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 20px;
+    font-weight: 400;
+    color: var(--ink);
+    margin-right: 8px;
+  }
+  .vh-formula .vh-pos { color: var(--good); font-weight: 600; }
+  .vh-formula .vh-neg { color: var(--ink-2); font-weight: 600; }
+  .vh-key {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px 28px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    line-height: 1.6;
+  }
+  .vh-key > div { display: flex; gap: 10px; align-items: baseline; }
+  .vh-key .pill { flex-shrink: 0; }
+  .vh-note {
+    font-size: 13px;
+    color: var(--ink-2);
+    line-height: 1.65;
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .vh-note strong { color: var(--ink); font-weight: 600; }
+  .vh-note em { font-style: italic; color: var(--ink); font-family: 'Fraunces', serif; }
+
+  /* Date cell */
+  .date-cell {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    padding: 48px 32px 32px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-3);
+    font-size: 10px;
+    margin-top: 64px;
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+  }
+  footer span { color: var(--highlight); }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    main { padding: 24px 20px; }
+    .header-inner { padding: 14px 20px; flex-wrap: wrap; }
+    .masthead h1 { font-size: 26px; }
+    .masthead-meta { display: none; }
+    .upload-hero { grid-template-columns: 1fr; gap: 32px; padding: 32px 0; }
+    .upload-hero-text h1 { font-size: 56px; }
+    .kpi-hero { grid-template-columns: 1fr 1fr; }
+    .kpi-hero .kpi { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .kpi-hero .kpi.primary { grid-column: 1 / -1; padding: 24px; }
+    .kpi-hero .kpi.primary .kpi-value { font-size: 64px; }
+    .section-head { grid-template-columns: 1fr; gap: 8px; }
+    .section-head .section-meta { text-align: left; }
+    .section-head h2 { font-size: 24px; }
+    .tab { margin-right: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="masthead">
+      <div class="masthead-eyebrow">
+        <span class="vol">Vol. I</span>
+        <span class="dot"></span>
+        <span>Transaction Ledger Cross-Check</span>
+        <span class="dot"></span>
+        <span id="mastheadDate"></span>
+      </div>
+      <h1>The <em>Reconciliation</em></h1>
+    </div>
+    <div class="masthead-meta" id="mastheadMeta">
+      <div><strong>Edition</strong> · awaiting upload</div>
+      <div>Locally processed · zero upload</div>
+    </div>
+    <div class="header-actions" id="headerActions">
+      <button id="newFileBtn" class="hidden" onclick="resetUI()">New file</button>
+      <button id="downloadBtn" class="hidden primary" onclick="downloadReport()">Download</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- Upload view -->
+  <div id="uploadView">
+    <div class="upload-hero">
+      <div class="upload-hero-text">
+        <div class="byline">An operational journal · <span>edition i</span></div>
+        <h1>Cross-check<em>the ledger.</em></h1>
+        <p class="lede">Upload one workbook with four tabs — <strong>TXNDetails</strong>, <strong>deposit</strong>, <strong>parking</strong>, <strong>Dispatched</strong> — and read back every transaction's journey across all four stages. What reconciled. What didn't. And which specific deposits remain unaccounted for.</p>
+        <div class="upload-notes">
+          <h4>House rules</h4>
+          <ul>
+            <li>Required tabs: <code>TXNDetails</code> · <code>deposit</code> · <code>parking</code> · <code>Dispatched</code>.</li>
+            <li><code>TXNDetails</code> must include the <code>Confirm Reference</code> and <code>Dispatched Reference</code> columns.</li>
+            <li>Nothing is uploaded to a server. All processing runs in your browser.</li>
+          </ul>
+        </div>
+      </div>
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm">
+        <div class="dropzone-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <polyline points="9 15 12 12 15 15"/>
+          </svg>
+        </div>
+        <h3>Drop your .xlsx here</h3>
+        <p>or <strong>click to browse</strong></p>
+      </label>
+    </div>
+  </div>
+
+  <!-- Loading view -->
+  <div id="loadingView" class="hidden">
+    <div class="loading">
+      <div class="spinner"></div>
+      <p id="loadingMsg">Reading workbook…</p>
+    </div>
+  </div>
+
+  <!-- Report view -->
+  <div id="reportView" class="hidden">
+    <div class="dateline">
+      <div class="left">
+        <strong id="reportFilename">file.xlsx</strong>
+      </div>
+      <div class="right" id="reportSubtitle">Processed at 00:00:00</div>
+    </div>
+
+    <div class="kpi-hero" id="kpiGrid"></div>
+
+    <section>
+      <div class="section-head">
+        <span class="chapter">§ 01 · Balance</span>
+        <h2>Deposits <em>vs</em> transactions</h2>
+        <span class="section-meta" id="depositMeta"></span>
+      </div>
+      <div class="variance-help">
+        <div class="vh-formula"><span class="vh-label">Variance</span> <span class="mono">=</span> <span class="vh-pos">Deposited</span> <span class="mono">−</span> <span class="vh-neg">Gross collection</span></div>
+        <div class="vh-note">
+          This is a <strong>balance check</strong>, separate from the per-txn reconciliation below. Every txn can be fully reconciled (all 4 stages match) AND still leave a positive variance — that just means money was deposited but not yet spent. The deeper question is <em>which specific deposits are unaccounted for</em> — see the <strong>Unmatched deposits</strong> tab.
+        </div>
+        <div class="vh-key">
+          <div><span class="pill good">≈ 0</span> Every deposit was used by a txn or batch. Fully closed.</div>
+          <div><span class="pill warn">Positive</span> Unspent wallet balance OR currency mismatch — check unmatched deposits.</div>
+          <div><span class="pill bad">Negative</span> Spending exceeds deposits — txn(s) without backing funds. Investigate.</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="summary-table" id="merchantTable"></table>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <span class="chapter">§ 02 · Detail</span>
+        <h2>Per-<em>transaction</em> status</h2>
+        <span class="section-meta">Cross-tab match by reference key</span>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-tab="recon">Reconciliation <span class="count" id="reconCount">0</span></button>
+        <button class="tab" data-tab="exceptions">Exceptions <span class="count" id="excCount">0</span></button>
+        <button class="tab" data-tab="deposits">Unmatched deposits <span class="count" id="depCount">0</span></button>
+        <button class="tab" data-tab="dq">Data quality <span class="count" id="dqCount">0</span></button>
+      </div>
+
+      <div class="tab-panel active" id="panel-recon">
+        <div class="filter-bar">
+          <input type="search" id="reconSearch" placeholder="Search by merchant, reference, txn #…">
+          <select id="reconStatusFilter">
+            <option value="">All statuses</option>
+            <option value="Reconciled">Reconciled</option>
+            <option value="Confirm missing">Confirm missing</option>
+            <option value="Dispatch missing">Dispatch missing</option>
+            <option value="Both missing">Both missing</option>
+            <option value="Unbalanced">Unbalanced</option>
+            <option value="Amount mismatch">Amount mismatch</option>
+            <option value="No Dispatched">No Dispatched</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table id="reconTable"></table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-exceptions">
+        <div class="table-wrap">
+          <table id="excTable"></table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-deposits">
+        <div class="filter-bar">
+          <input type="search" id="depSearch" placeholder="Search by merchant…">
+          <select id="depFilter">
+            <option value="unmatched">Unmatched only</option>
+            <option value="all">All deposits</option>
+            <option value="single">Single-txn matches</option>
+            <option value="batch">Batch matches</option>
+            <option value="multi-batch">Multi-batch matches</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table id="depTable"></table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-dq">
+        <div class="dq-grid" id="dqGrid"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Error view -->
+  <div id="errorView" class="hidden">
+    <div class="error-box">
+      <strong>Couldn't process the file</strong>
+      <span id="errorMsg"></span>
+    </div>
+    <button onclick="resetUI()">Try another file</button>
+  </div>
+</main>
+
+<footer>
+  <span>—</span> &nbsp; All processing happens in your browser. Nothing leaves the page. &nbsp; <span>—</span>
+</footer>
+
+<script>
+'use strict';
+
+// ============================================================
+// State
+// ============================================================
+let state = {
+  filename: '',
+  workbook: null,
+  results: null,
+};
+
+// ============================================================
+// Helpers
+// ============================================================
+function toNum(v) {
+  if (v === null || v === undefined) return 0;
+  if (typeof v === 'number') return v;
+  const s = String(v).replace(/,/g, '').trim();
+  if (s === '' || s === '[NULL]' || s === 'NULL' || s === 'None') return 0;
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+function isMissing(v) {
+  if (v === null || v === undefined) return true;
+  const s = String(v).trim();
+  return s === '' || s === '[NULL]' || s === 'NULL' || s === 'None';
+}
+
+function fmt(n, decimals = 0) {
+  if (typeof n !== 'number' || isNaN(n)) return '—';
+  return n.toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function fmtSigned(n) {
+  if (typeof n !== 'number' || isNaN(n)) return '—';
+  if (Math.abs(n) < 0.005) return '0';
+  return n.toLocaleString('en-US', { signDisplay: 'never' }).replace(/(.+)/, n < 0 ? '($1)' : '$1');
+}
+
+// Parse a date that might be a JS Date, an ISO/SQL string, or an Excel serial number
+function parseToDate(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (typeof v === 'number') {
+    // Excel serial date — days since 1899-12-30
+    const ms = (v - 25569) * 86400 * 1000;
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const s = String(v).trim();
+  if (!s || s === '[NULL]') return null;
+  // Try direct parse; replace space with T for "2026-01-02 17:41:59" style
+  let d = new Date(s.replace(' ', 'T'));
+  if (isNaN(d.getTime())) d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function fmtDate(v, withTime = true) {
+  const d = parseToDate(v);
+  if (!d) return '—';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  if (!withTime) return `${y}-${m}-${day}`;
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${day} ${hh}:${mm}`;
+}
+
+function fmtDateShort(v) {
+  return fmtDate(v, false);
+}
+
+function findSheet(workbook, name) {
+  // Case-insensitive, trimmed match
+  const target = name.toLowerCase().trim();
+  return workbook.SheetNames.find(s => s.toLowerCase().trim() === target);
+}
+
+function sheetToJSON(workbook, sheetName) {
+  const actualName = findSheet(workbook, sheetName);
+  if (!actualName) return null;
+  return XLSX.utils.sheet_to_json(workbook.Sheets[actualName], {
+    defval: null,
+    raw: true,
+  });
+}
+
+// ============================================================
+// Reconciliation engine
+// ============================================================
+function reconcile(workbook) {
+  const txnSheet = findSheet(workbook, 'TXNDetails');
+  const depSheet = findSheet(workbook, 'deposit');
+  const parkSheet = findSheet(workbook, 'parking');
+  const dispSheet = findSheet(workbook, 'Dispatched');
+
+  const missing = [];
+  if (!txnSheet) missing.push('TXNDetails');
+  if (!depSheet) missing.push('deposit');
+  if (!parkSheet) missing.push('parking');
+  if (!dispSheet) missing.push('Dispatched');
+  if (missing.length) {
+    throw new Error('Required tab(s) not found: ' + missing.join(', '));
+  }
+
+  const txnRows = XLSX.utils.sheet_to_json(workbook.Sheets[txnSheet], { defval: null });
+  const depRows = XLSX.utils.sheet_to_json(workbook.Sheets[depSheet], { defval: null });
+  const parkRows = XLSX.utils.sheet_to_json(workbook.Sheets[parkSheet], { defval: null });
+  const dispRows = XLSX.utils.sheet_to_json(workbook.Sheets[dispSheet], { defval: null });
+
+  // Validate required cols on TXNDetails
+  if (!txnRows.length) throw new Error('TXNDetails sheet is empty.');
+  const sampleKeys = Object.keys(txnRows[0]);
+  if (!sampleKeys.includes('Confirm Reference') || !sampleKeys.includes('Dispatched Reference')) {
+    throw new Error('TXNDetails must contain "Confirm Reference" and "Dispatched Reference" columns.');
+  }
+
+  // Build lookup indices
+  // Parking index: key = (billno, field2='biz.merchant.pmnt.confirm') -> array of rows
+  // We index by Confirm Reference for confirm entries and by Dispatched Reference for dispatch entries
+  const parkConfirmIdx = new Map();
+  const parkDispatchIdx = new Map();
+  for (const r of parkRows) {
+    const billno = r.billno == null ? '' : String(r.billno).trim();
+    const field1 = r.field1 == null ? '' : String(r.field1).trim();
+    const field2 = r.field2 == null ? '' : String(r.field2).trim();
+    const type = r.part_tran_type == null ? '' : String(r.part_tran_type).toLowerCase().trim();
+    const amt = toNum(r.tran_amt);
+    const date = r.tran_date;
+
+    if (field2 === 'biz.merchant.pmnt.confirm' && billno) {
+      if (!parkConfirmIdx.has(billno)) parkConfirmIdx.set(billno, []);
+      parkConfirmIdx.get(billno).push({ amt, date, raw: r });
+    }
+    if (field2 === 'biz.mar.pmnt.dp' && type === 'dr' && field1) {
+      if (!parkDispatchIdx.has(field1)) parkDispatchIdx.set(field1, []);
+      parkDispatchIdx.get(field1).push({ amt, date, raw: r });
+    }
+  }
+
+  // Dispatched index: by field1 -> { sumDr, sumCr, dates }
+  const dispIdx = new Map();
+  for (const r of dispRows) {
+    const field1 = r.field1 == null ? '' : String(r.field1).trim();
+    if (!field1) continue;
+    const type = r.part_tran_type == null ? '' : String(r.part_tran_type).toLowerCase().trim();
+    const amt = toNum(r.tran_amt);
+    if (!dispIdx.has(field1)) dispIdx.set(field1, { sumDr: 0, sumCr: 0, count: 0, dates: [] });
+    const entry = dispIdx.get(field1);
+    if (type === 'dr') entry.sumDr += amt;
+    else if (type === 'cr') entry.sumCr += amt;
+    entry.count++;
+    if (r.tran_date) entry.dates.push(r.tran_date);
+  }
+
+  // Deposit by merchant: sum + earliest/latest dates + count
+  const depByMerchSum = new Map(); // emp -> { sum, count, earliest, latest, dates: [] }
+  for (const r of depRows) {
+    const emp = r.employeeName == null ? '' : String(r.employeeName).trim();
+    const type = r.part_tran_type == null ? '' : String(r.part_tran_type).toLowerCase().trim();
+    const amt = toNum(r.tran_amt);
+    if (!emp || type !== 'cr') continue;
+    if (!depByMerchSum.has(emp)) depByMerchSum.set(emp, { sum: 0, count: 0, dates: [] });
+    const entry = depByMerchSum.get(emp);
+    entry.sum += amt;
+    entry.count++;
+    if (r.tran_date) entry.dates.push(r.tran_date);
+  }
+
+  // Reconcile each TXN
+  const txnResults = [];
+  const dataQuality = [];
+  const seenStatuses = {};
+
+  // Data quality scan
+  const dqSet = new Set();
+
+  // Check 1: mixed case dr/cr
+  const drCrCases = new Set();
+  for (const r of depRows.concat(parkRows, dispRows)) {
+    if (r.part_tran_type != null) drCrCases.add(String(r.part_tran_type));
+  }
+  const hasMixedCase = [...drCrCases].some(s => /[A-Z]/.test(s)) &&
+                       [...drCrCases].some(s => /[a-z]/.test(s));
+  if (hasMixedCase) {
+    dqSet.add(JSON.stringify({
+      title: 'Mixed-case ledger types',
+      where: 'part_tran_type column · deposit/parking/Dispatched',
+      detail: 'Values: ' + [...drCrCases].join(', ') + '. Standardise to lowercase at source.',
+    }));
+  }
+
+  // Check 2: typo "reverese"
+  const typoFound = parkRows.some(r => String(r.field2 || '').includes('reverese'));
+  if (typoFound) {
+    dqSet.add(JSON.stringify({
+      title: 'Typo: "biz.mar.pmnt.dp.reverese" (should be "reverse")',
+      where: 'parking · field2',
+      detail: 'Fix the spelling at source — any downstream filter on the reversal category currently misses these rows.',
+    }));
+  }
+
+  // Check 3: [NULL] strings
+  let nullStrCount = 0;
+  for (const r of txnRows) {
+    for (const v of Object.values(r)) {
+      if (v === '[NULL]') nullStrCount++;
+    }
+  }
+  if (nullStrCount > 0) {
+    dqSet.add(JSON.stringify({
+      title: '"[NULL]" stored as literal text',
+      where: 'TXNDetails · ' + nullStrCount + ' cells',
+      detail: 'Replace with truly empty cells — some downstream formulas treat "[NULL]" as a real value.',
+    }));
+  }
+
+  // Check 4: amounts stored as text with commas
+  let amtTextCount = 0;
+  for (const r of txnRows) {
+    if (typeof r.collection_amount === 'string' && r.collection_amount.includes(',')) amtTextCount++;
+  }
+  if (amtTextCount > 0) {
+    dqSet.add(JSON.stringify({
+      title: 'collection_amount stored as text with commas',
+      where: 'TXNDetails · column N',
+      detail: 'e.g. "148,021" instead of the number 148021. Export as numeric values from the source system.',
+    }));
+  }
+
+  // Check 5: sheet name with trailing space
+  if (workbook.SheetNames.some(s => s !== s.trim())) {
+    dqSet.add(JSON.stringify({
+      title: 'Sheet name with whitespace',
+      where: 'Tab name: "' + workbook.SheetNames.find(s => s !== s.trim()) + '"',
+      detail: 'Rename the tab to remove leading/trailing spaces — avoids formula errors when referencing the sheet.',
+    }));
+  }
+
+  // Now reconcile each transaction
+  for (let i = 0; i < txnRows.length; i++) {
+    const r = txnRows[i];
+    const confirmRef = r['Confirm Reference'] == null ? '' : String(r['Confirm Reference']).trim();
+    const dispatchRef = r['Dispatched Reference'] == null ? '' : String(r['Dispatched Reference']).trim();
+    const merchant = r.merchant || '';
+    const collAmt = toNum(r.collection_amount);
+    const sc = toNum(r.service_charge);
+    const netAmt = collAmt - sc;
+    const collCcy = r.collection_currency || '';
+    const createdDate = r.created_date || r.processing_date;
+
+    // Parking confirm match
+    const parkConfirm = parkConfirmIdx.get(confirmRef);
+    const parkConfirmExists = !!parkConfirm && parkConfirm.length > 0;
+    const parkConfirmDate = parkConfirmExists ? parkConfirm[0].date : null;
+
+    // Parking dispatch match
+    const parkDispatch = parkDispatchIdx.get(dispatchRef);
+    const parkDispatchExists = !!parkDispatch && parkDispatch.length > 0;
+    const parkDispatchDate = parkDispatchExists ? parkDispatch[0].date : null;
+
+    // Parking amount (from confirm row, if any)
+    const parkAmt = parkConfirmExists ? parkConfirm[0].amt : null;
+
+    // Amount variance: only meaningful for KRW txns (where collection currency matches parking ledger ccy)
+    let amtVariance = null;
+    let amtVarianceLabel;
+    if (collCcy === 'KRW' && parkAmt !== null) {
+      amtVariance = parkAmt - netAmt;
+      amtVarianceLabel = 'KRW';
+    } else if (collCcy === 'KRW') {
+      amtVarianceLabel = 'KRW';
+    } else {
+      amtVarianceLabel = 'FX';
+    }
+
+    // Dispatched legs
+    const disp = dispIdx.get(dispatchRef);
+    const dispSumDr = disp ? disp.sumDr : 0;
+    const dispSumCr = disp ? disp.sumCr : 0;
+    const dispNet = dispSumDr - dispSumCr;
+    const dispCount = disp ? disp.count : 0;
+    const dispDate = disp && disp.dates.length ? disp.dates[0] : null;
+
+    // Determine overall status
+    let status;
+    if (!parkConfirmExists && !parkDispatchExists) {
+      status = 'Both missing';
+    } else if (!parkConfirmExists) {
+      status = 'Confirm missing';
+    } else if (!parkDispatchExists) {
+      status = 'Dispatch missing';
+    } else if (dispCount === 0) {
+      status = 'No Dispatched';
+    } else if (Math.abs(dispNet) > 0.01) {
+      status = 'Unbalanced';
+    } else if (amtVarianceLabel === 'KRW' && amtVariance !== null && Math.abs(amtVariance) > 0.01) {
+      status = 'Amount mismatch';
+    } else {
+      status = 'Reconciled';
+    }
+
+    seenStatuses[status] = (seenStatuses[status] || 0) + 1;
+
+    txnResults.push({
+      idx: i + 1,
+      num: r['#'] ?? (i + 1),
+      merchant,
+      confirmRef,
+      dispatchRef,
+      collAmt,
+      sc,
+      netAmt,
+      collCcy,
+      createdDate,
+      parkConfirmExists,
+      parkConfirmDate,
+      parkDispatchExists,
+      parkDispatchDate,
+      parkAmt,
+      amtVariance,
+      amtVarianceLabel,
+      dispSumDr,
+      dispSumCr,
+      dispNet,
+      dispCount,
+      dispDate,
+      status,
+    });
+  }
+
+  // ============================================================
+  // Deposit-to-txn matching (separate from txn-flow reconciliation)
+  // For each deposit cr entry, find if it matches:
+  //   - a single txn's collection_amount, OR
+  //   - the sum of all txns in a batch_id
+  // for the same merchant.
+  // ============================================================
+  // Build batch totals per merchant
+  const batchTotals = new Map(); // 'merchant|batch_id' -> sum
+  const txnAmts = new Map(); // 'merchant|amount' -> list of txn refs
+  for (const r of txnRows) {
+    const m = r.merchant || 'Unknown';
+    const batch = r.batch_id ? String(r.batch_id).trim() : '';
+    const amt = toNum(r.collection_amount);
+    const ref = String(r['Confirm Reference'] || '').trim();
+    if (batch && batch !== '[NULL]') {
+      const key = m + '|' + batch;
+      batchTotals.set(key, (batchTotals.get(key) || 0) + amt);
+    }
+    const tk = m + '|' + amt.toFixed(2);
+    if (!txnAmts.has(tk)) txnAmts.set(tk, []);
+    txnAmts.get(tk).push({ ref, batch });
+  }
+
+  // For each deposit cr entry, attempt to classify
+  const depositMatches = [];
+  // Track which batches and single-txns are "claimed" by deposits so we don't double-match
+  const claimedBatches = new Set();
+  const claimedTxns = new Set();
+
+  // Iterate deposits in date order so earliest claim wins
+  const sortedDeps = [...depRows]
+    .map(r => ({ ...r, _date: parseToDate(r.tran_date) }))
+    .filter(r => String(r.part_tran_type || '').toLowerCase() === 'cr' && r.employeeName)
+    .sort((a, b) => (a._date || 0) - (b._date || 0));
+
+  for (const r of sortedDeps) {
+    const emp = String(r.employeeName).trim();
+    const amt = toNum(r.tran_amt);
+    const date = r.tran_date;
+    // Strip "(CCY)" suffix from employeeName to get merchant name
+    const merch = emp.replace(/\s*\([A-Z]{3}\)\s*$/, '').trim();
+
+    let matchType = 'unmatched';
+    let matchDetail = '';
+
+    // Try single-txn match first
+    const tk = merch + '|' + amt.toFixed(2);
+    if (txnAmts.has(tk)) {
+      // Find an unclaimed txn at this amount
+      const candidates = txnAmts.get(tk).filter(c => !claimedTxns.has(c.ref));
+      if (candidates.length > 0) {
+        const claim = candidates[0];
+        claimedTxns.add(claim.ref);
+        matchType = 'single';
+        matchDetail = 'TXN ' + claim.ref;
+      }
+    }
+
+    // Try single batch sum match
+    if (matchType === 'unmatched') {
+      for (const [bkey, bsum] of batchTotals) {
+        if (claimedBatches.has(bkey)) continue;
+        if (!bkey.startsWith(merch + '|')) continue;
+        if (Math.abs(bsum - amt) < 0.01) {
+          claimedBatches.add(bkey);
+          matchType = 'batch';
+          matchDetail = 'Batch ' + bkey.split('|')[1] + ' (' + fmt(bsum) + ')';
+          break;
+        }
+      }
+    }
+
+    // Try multi-batch sum match (one deposit covering all unclaimed batches for this merchant)
+    if (matchType === 'unmatched') {
+      let totalUnclaimed = 0;
+      const unclaimedKeys = [];
+      for (const [bkey, bsum] of batchTotals) {
+        if (claimedBatches.has(bkey)) continue;
+        if (!bkey.startsWith(merch + '|')) continue;
+        totalUnclaimed += bsum;
+        unclaimedKeys.push(bkey);
+      }
+      if (unclaimedKeys.length > 1 && Math.abs(totalUnclaimed - amt) < 0.01) {
+        unclaimedKeys.forEach(k => claimedBatches.add(k));
+        matchType = 'multi-batch';
+        matchDetail = unclaimedKeys.length + ' batches combined (' + fmt(totalUnclaimed) + ')';
+      }
+    }
+
+    depositMatches.push({
+      date,
+      merchant: merch,
+      employeeName: emp,
+      amount: amt,
+      matchType,
+      matchDetail,
+    });
+  }
+  const merchAgg = new Map();
+  for (const r of txnRows) {
+    const m = r.merchant || 'Unknown';
+    if (!merchAgg.has(m)) merchAgg.set(m, { count: 0, gross: 0, ccys: new Set() });
+    const agg = merchAgg.get(m);
+    agg.count++;
+    agg.gross += toNum(r.collection_amount);
+    if (r.collection_currency) agg.ccys.add(r.collection_currency);
+  }
+  const merchantSummary = [...merchAgg.entries()].map(([m, agg]) => {
+    // Match deposit by employeeName starting with merchant name
+    let deposited = 0;
+    let depCount = 0;
+    let allDates = [];
+    for (const [emp, info] of depByMerchSum.entries()) {
+      if (emp.startsWith(m)) {
+        deposited += info.sum;
+        depCount += info.count;
+        allDates = allDates.concat(info.dates);
+      }
+    }
+    // Sort dates and pick first/last
+    const sortedDates = allDates.map(d => parseToDate(d)).filter(d => d).sort((a, b) => a - b);
+    const earliestDep = sortedDates.length ? sortedDates[0] : null;
+    const latestDep = sortedDates.length ? sortedDates[sortedDates.length - 1] : null;
+
+    // Count matched/unmatched deposits for this merchant
+    const merchDeps = depositMatches.filter(d => d.merchant === m);
+    const matchedDeps = merchDeps.filter(d => d.matchType !== 'unmatched').length;
+    const unmatchedDeps = merchDeps.filter(d => d.matchType === 'unmatched').length;
+    const unmatchedAmt = merchDeps
+      .filter(d => d.matchType === 'unmatched')
+      .reduce((s, d) => s + d.amount, 0);
+
+    return {
+      merchant: m,
+      txnCount: agg.count,
+      gross: agg.gross,
+      deposited,
+      depCount,
+      matchedDeps,
+      unmatchedDeps,
+      unmatchedAmt,
+      earliestDep,
+      latestDep,
+      variance: deposited - agg.gross,
+      currencies: [...agg.ccys].join(', '),
+    };
+  }).sort((a, b) => b.gross - a.gross);
+
+  // KPIs
+  const total = txnResults.length;
+  const reconciled = seenStatuses['Reconciled'] || 0;
+  const unmatchedDepCount = depositMatches.filter(d => d.matchType === 'unmatched').length;
+  const unmatchedDepAmt = depositMatches
+    .filter(d => d.matchType === 'unmatched')
+    .reduce((s, d) => s + d.amount, 0);
+  const kpis = {
+    total,
+    reconciled,
+    reconciledPct: total ? (reconciled / total) : 0,
+    confirmMissing: seenStatuses['Confirm missing'] || 0,
+    dispatchMissing: seenStatuses['Dispatch missing'] || 0,
+    bothMissing: seenStatuses['Both missing'] || 0,
+    unbalanced: seenStatuses['Unbalanced'] || 0,
+    amtMismatch: seenStatuses['Amount mismatch'] || 0,
+    noDispatched: seenStatuses['No Dispatched'] || 0,
+    totalExceptions: total - reconciled,
+    depCount: depositMatches.length,
+    unmatchedDepCount,
+    unmatchedDepAmt,
+  };
+
+  return {
+    kpis,
+    merchantSummary,
+    txnResults,
+    depositMatches,
+    dataQuality: [...dqSet].map(s => JSON.parse(s)),
+    timestamp: new Date(),
+  };
+}
+
+// ============================================================
+// Rendering
+// ============================================================
+function statusPill(status) {
+  if (status === 'Reconciled') return `<span class="pill good">${status}</span>`;
+  if (status === 'Amount mismatch' || status === 'Unbalanced') return `<span class="pill warn">${status}</span>`;
+  return `<span class="pill bad">${status}</span>`;
+}
+
+function renderKPIs(kpis) {
+  const grid = document.getElementById('kpiGrid');
+  const reconPct = (kpis.reconciledPct * 100).toFixed(1);
+  const exceptionPct = ((kpis.totalExceptions / kpis.total) * 100).toFixed(1);
+  const balanceClean = kpis.unmatchedDepCount === 0;
+
+  grid.innerHTML = `
+    <div class="kpi primary">
+      <div class="kpi-label"><span class="marker">i.</span> Transaction-flow reconciliation</div>
+      <div class="kpi-value">${reconPct}<span class="kpi-value-suffix">%</span></div>
+      <div class="kpi-sub">${fmt(kpis.reconciled)} of ${fmt(kpis.total)} txns passed all four stages</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label"><span class="marker">ii.</span> Exceptions</div>
+      <div class="kpi-value">${fmt(kpis.totalExceptions)}</div>
+      <div class="kpi-sub">${exceptionPct}% of total · ${kpis.totalExceptions === 0 ? '<span class="pos">none flagged</span>' : 'review the detail'}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label"><span class="marker">iii.</span> Deposit entries</div>
+      <div class="kpi-value">${fmt(kpis.depCount)}</div>
+      <div class="kpi-sub">${fmt(kpis.depCount - kpis.unmatchedDepCount)} matched · ${kpis.unmatchedDepCount === 0 ? '<span class="pos">all accounted</span>' : '<span class="neg">' + fmt(kpis.unmatchedDepCount) + ' unmatched</span>'}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label"><span class="marker">iv.</span> Balance status</div>
+      <div class="kpi-value">${balanceClean ? '✓' : '!'}</div>
+      <div class="kpi-sub">${balanceClean ? '<span class="pos">All deposits claimed</span>' : 'Unaccounted: ' + fmt(kpis.unmatchedDepAmt)}</div>
+    </div>
+  `;
+}
+
+function renderMerchantSummary(summary) {
+  const table = document.getElementById('merchantTable');
+  const totalRow = summary.reduce((acc, r) => ({
+    count: acc.count + r.txnCount,
+    gross: acc.gross + r.gross,
+    deposited: acc.deposited + r.deposited,
+    variance: acc.variance + r.variance,
+    depCount: acc.depCount + r.depCount,
+  }), { count: 0, gross: 0, deposited: 0, variance: 0, depCount: 0 });
+
+  table.innerHTML = `
+    <thead><tr>
+      <th>Merchant</th>
+      <th>Ccy</th>
+      <th class="num">Txns</th>
+      <th class="num">Gross collection</th>
+      <th class="num">Deposited</th>
+      <th class="num">Variance</th>
+      <th class="num">Deposits</th>
+      <th>Deposit window</th>
+      <th>Interpretation</th>
+    </tr></thead>
+    <tbody>
+      ${summary.map(r => {
+        const sameCcy = r.currencies === 'KRW';
+        let interp;
+        if (Math.abs(r.variance) < 0.5 && r.unmatchedDeps === 0) {
+          interp = '<span class="check">✓</span> Every deposit matched to a txn or batch.';
+        } else if (!sameCcy && r.unmatchedDeps > 0) {
+          interp = r.unmatchedDeps + ' deposit(s) unmatched · multi-currency (compare via FX)';
+        } else if (r.unmatchedDeps > 0) {
+          interp = '<strong>' + r.unmatchedDeps + ' deposit(s) unmatched</strong> · ' + fmt(r.unmatchedAmt) + ' — see Unmatched deposits tab';
+        } else if (r.variance > 0) {
+          interp = 'Excess deposits in matched entries (FX/rounding)';
+        } else {
+          interp = 'Under-funded — investigate';
+        }
+        const window = r.earliestDep && r.latestDep
+          ? (fmtDateShort(r.earliestDep) === fmtDateShort(r.latestDep)
+              ? fmtDateShort(r.earliestDep)
+              : fmtDateShort(r.earliestDep) + ' → ' + fmtDateShort(r.latestDep))
+          : '—';
+        const depCell = r.depCount === 0 ? '0' :
+          (r.unmatchedDeps === 0
+            ? '<span class="check">' + r.depCount + '</span>'
+            : '<span style="color:var(--warn); font-weight:600;">' + (r.depCount - r.unmatchedDeps) + ' / ' + r.depCount + '</span>');
+        return `
+          <tr>
+            <td>${escapeHtml(r.merchant)}</td>
+            <td class="mono" style="font-size: 12px; color: var(--ink-3);">${escapeHtml(r.currencies)}</td>
+            <td class="num mono">${fmt(r.txnCount)}</td>
+            <td class="num mono">${fmt(r.gross)}</td>
+            <td class="num mono">${fmt(r.deposited)}</td>
+            <td class="num mono" style="color: ${Math.abs(r.variance) < 0.5 ? 'var(--good)' : (r.variance < 0 && sameCcy ? 'var(--bad)' : 'var(--ink-2)')}">${r.variance === 0 ? '0' : fmt(r.variance)}</td>
+            <td class="num mono">${depCell}</td>
+            <td class="mono" style="font-size: 12px; color: var(--ink-3);">${escapeHtml(window)}</td>
+            <td style="color: var(--ink-3); font-size: 12px;">${interp}</td>
+          </tr>
+        `;
+      }).join('')}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td>Total</td>
+        <td></td>
+        <td class="num mono">${fmt(totalRow.count)}</td>
+        <td class="num mono">${fmt(totalRow.gross)}</td>
+        <td class="num mono">${fmt(totalRow.deposited)}</td>
+        <td class="num mono">${fmt(totalRow.variance)}</td>
+        <td class="num mono">${fmt(totalRow.depCount)}</td>
+        <td></td>
+        <td></td>
+      </tr>
+    </tfoot>
+  `;
+  document.getElementById('depositMeta').textContent = `${summary.length} merchants · ${fmt(totalRow.count)} txns · ${fmt(totalRow.depCount)} deposit entries`;
+}
+
+function renderReconTable(rows) {
+  const filter = document.getElementById('reconSearch').value.toLowerCase();
+  const status = document.getElementById('reconStatusFilter').value;
+  const filtered = rows.filter(r => {
+    if (status && r.status !== status) return false;
+    if (filter) {
+      const blob = `${r.num} ${r.merchant} ${r.confirmRef} ${r.dispatchRef}`.toLowerCase();
+      if (!blob.includes(filter)) return false;
+    }
+    return true;
+  });
+
+  const table = document.getElementById('reconTable');
+  table.innerHTML = `
+    <thead><tr>
+      <th>#</th>
+      <th>Created</th>
+      <th>Merchant</th>
+      <th>Confirm ref</th>
+      <th>Dispatched ref</th>
+      <th class="num">Net amt</th>
+      <th>Park confirm</th>
+      <th>Park dispatch</th>
+      <th class="num">Park amt</th>
+      <th class="num">Δ amt</th>
+      <th class="num">Disp Σdr</th>
+      <th class="num">Disp Σcr</th>
+      <th class="num">Disp net</th>
+      <th>Status</th>
+    </tr></thead>
+    <tbody>
+      ${filtered.map(r => `
+        <tr>
+          <td class="mono">${escapeHtml(r.num)}</td>
+          <td class="date-cell">${fmtDate(r.createdDate)}</td>
+          <td>${escapeHtml(r.merchant)}</td>
+          <td class="mono" style="font-size: 12px;">${escapeHtml(r.confirmRef)}</td>
+          <td class="mono" style="font-size: 12px;">${escapeHtml(r.dispatchRef)}</td>
+          <td class="num mono">${fmt(r.netAmt)}</td>
+          <td>${r.parkConfirmExists ? '<span class="check" title="' + fmtDate(r.parkConfirmDate) + '">✓</span>' : '<span class="x">✗</span>'}</td>
+          <td>${r.parkDispatchExists ? '<span class="check" title="' + fmtDate(r.parkDispatchDate) + '">✓</span>' : '<span class="x">✗</span>'}</td>
+          <td class="num mono">${r.parkAmt !== null ? fmt(r.parkAmt) : '—'}</td>
+          <td class="num mono" style="color: ${r.amtVarianceLabel === 'FX' ? 'var(--ink-3)' : (Math.abs(r.amtVariance || 0) < 0.5 ? 'var(--good)' : 'var(--warn)')}">${r.amtVarianceLabel === 'FX' ? 'FX' : (r.amtVariance === null ? '—' : (Math.abs(r.amtVariance) < 0.5 ? '0' : fmt(r.amtVariance)))}</td>
+          <td class="num mono">${fmt(r.dispSumDr, 2)}</td>
+          <td class="num mono">${fmt(r.dispSumCr, 2)}</td>
+          <td class="num mono" style="color: ${Math.abs(r.dispNet) < 0.01 ? 'var(--good)' : 'var(--bad)'}">${Math.abs(r.dispNet) < 0.01 ? '0' : fmt(r.dispNet, 2)}</td>
+          <td>${statusPill(r.status)}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  `;
+  document.getElementById('reconCount').textContent = rows.length;
+}
+
+function renderExceptions(rows) {
+  const exceptions = rows.filter(r => r.status !== 'Reconciled');
+  const table = document.getElementById('excTable');
+  if (exceptions.length === 0) {
+    table.innerHTML = `<tbody><tr><td colspan="8" style="text-align: center; padding: 48px; color: var(--ink-3);">
+      <strong style="display:block; font-size: 16px; color: var(--good); margin-bottom: 6px;">✓ Nothing to flag</strong>
+      Every transaction reconciles cleanly across all four stages.
+    </td></tr></tbody>`;
+  } else {
+    table.innerHTML = `
+      <thead><tr>
+        <th>#</th>
+        <th>TXN created</th>
+        <th>Merchant</th>
+        <th>Confirm ref</th>
+        <th>Dispatched ref</th>
+        <th class="num">Net amt</th>
+        <th>Found in</th>
+        <th>Issue</th>
+      </tr></thead>
+      <tbody>
+        ${exceptions.map(r => {
+          // Show what stages WERE found (with dates) — helps user verify and locate
+          const found = [];
+          if (r.parkConfirmExists) found.push(`<span style="color:var(--good)">Confirm</span> ${fmtDate(r.parkConfirmDate)}`);
+          if (r.parkDispatchExists) found.push(`<span style="color:var(--good)">Dispatch</span> ${fmtDate(r.parkDispatchDate)}`);
+          if (r.dispCount > 0) found.push(`<span style="color:var(--good)">Disp legs (${r.dispCount})</span> ${fmtDate(r.dispDate)}`);
+          if (found.length === 0) found.push('<span style="color:var(--bad)">Nothing yet</span>');
+          return `
+            <tr>
+              <td class="mono">${escapeHtml(r.num)}</td>
+              <td class="date-cell">${fmtDate(r.createdDate)}</td>
+              <td>${escapeHtml(r.merchant)}</td>
+              <td class="mono" style="font-size: 12px;">${escapeHtml(r.confirmRef)}</td>
+              <td class="mono" style="font-size: 12px;">${escapeHtml(r.dispatchRef)}</td>
+              <td class="num mono">${fmt(r.netAmt)}</td>
+              <td style="font-size: 11.5px; line-height: 1.6;">${found.join('<br>')}</td>
+              <td>${statusPill(r.status)}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    `;
+  }
+  document.getElementById('excCount').textContent = exceptions.length;
+}
+
+function renderDeposits(deposits) {
+  const filter = (document.getElementById('depSearch')?.value || '').toLowerCase();
+  const mode = document.getElementById('depFilter')?.value || 'unmatched';
+  let filtered = deposits;
+  if (mode === 'unmatched') filtered = filtered.filter(d => d.matchType === 'unmatched');
+  else if (mode === 'single') filtered = filtered.filter(d => d.matchType === 'single');
+  else if (mode === 'batch') filtered = filtered.filter(d => d.matchType === 'batch');
+  else if (mode === 'multi-batch') filtered = filtered.filter(d => d.matchType === 'multi-batch');
+  if (filter) {
+    filtered = filtered.filter(d =>
+      (d.merchant + ' ' + d.matchDetail).toLowerCase().includes(filter));
+  }
+
+  const table = document.getElementById('depTable');
+  const unmatchedCount = deposits.filter(d => d.matchType === 'unmatched').length;
+  document.getElementById('depCount').textContent = unmatchedCount;
+
+  if (filtered.length === 0) {
+    const msg = mode === 'unmatched'
+      ? `<strong style="display:block; font-size: 16px; color: var(--good); margin-bottom: 6px;">✓ Every deposit is accounted for</strong>
+         Each deposit cr entry matches a single transaction or a batch sum. No unaccounted balances.`
+      : 'No deposits match the current filter.';
+    table.innerHTML = `<tbody><tr><td colspan="6" style="text-align: center; padding: 48px; color: var(--ink-3);">${msg}</td></tr></tbody>`;
+    return;
+  }
+
+  table.innerHTML = `
+    <thead><tr>
+      <th>Date</th>
+      <th>Merchant</th>
+      <th class="num">Amount</th>
+      <th>Match type</th>
+      <th>Matched to</th>
+      <th>Interpretation</th>
+    </tr></thead>
+    <tbody>
+      ${filtered.map(d => {
+        let pill, interp;
+        if (d.matchType === 'single') {
+          pill = '<span class="pill good">Single txn</span>';
+          interp = 'Deposit equals one transaction\u2019s collection amount.';
+        } else if (d.matchType === 'batch') {
+          pill = '<span class="pill info">Batch sum</span>';
+          interp = 'Deposit equals the sum of all txns in a batch.';
+        } else if (d.matchType === 'multi-batch') {
+          pill = '<span class="pill info">Multi-batch</span>';
+          interp = 'One deposit covers several batches combined.';
+        } else {
+          pill = '<span class="pill warn">Unmatched</span>';
+          interp = 'No matching txn or batch found. Could be wallet balance, FX-driven (multi-currency), partial fund, or a missing/extra entry.';
+        }
+        return `
+          <tr>
+            <td class="date-cell">${fmtDate(d.date)}</td>
+            <td>${escapeHtml(d.merchant)}</td>
+            <td class="num mono">${fmt(d.amount)}</td>
+            <td>${pill}</td>
+            <td class="mono" style="font-size: 12px;">${escapeHtml(d.matchDetail || '—')}</td>
+            <td style="font-size: 12px; color: var(--ink-3);">${interp}</td>
+          </tr>
+        `;
+      }).join('')}
+    </tbody>
+  `;
+}
+
+function renderDQ(items) {
+  const grid = document.getElementById('dqGrid');
+  if (items.length === 0) {
+    grid.innerHTML = `<div class="dq-card" style="border-left-color: var(--good);">
+      <h4>No data quality issues detected</h4>
+      <span class="rec">Source data looks clean across all four tabs.</span>
+    </div>`;
+  } else {
+    grid.innerHTML = items.map(item => `
+      <div class="dq-card">
+        <h4>${escapeHtml(item.title)}</h4>
+        <span class="where">${escapeHtml(item.where)}</span>
+        <div class="rec">${escapeHtml(item.detail)}</div>
+      </div>
+    `).join('');
+  }
+  document.getElementById('dqCount').textContent = items.length;
+}
+
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+// ============================================================
+// Main processing
+// ============================================================
+function processFile(file) {
+  state.filename = file.name;
+  showView('loadingView');
+  document.getElementById('loadingMsg').textContent = 'Reading workbook…';
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      document.getElementById('loadingMsg').textContent = 'Cross-checking transactions…';
+      // Use setTimeout to allow UI to update before heavy parsing
+      setTimeout(() => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+          state.workbook = workbook;
+
+          const results = reconcile(workbook);
+          state.results = results;
+
+          renderReport(results);
+          showView('reportView');
+          document.getElementById('newFileBtn').classList.remove('hidden');
+          document.getElementById('downloadBtn').classList.remove('hidden');
+        } catch (err) {
+          showError(err.message);
+        }
+      }, 50);
+    } catch (err) {
+      showError(err.message);
+    }
+  };
+  reader.onerror = function() {
+    showError('Failed to read the file.');
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderReport(results) {
+  document.getElementById('reportFilename').textContent = state.filename;
+  document.getElementById('reportSubtitle').textContent =
+    `${fmt(results.kpis.total)} transactions · ${results.timestamp.toLocaleString()}`;
+
+  // Update masthead meta
+  const meta = document.getElementById('mastheadMeta');
+  if (meta) {
+    meta.innerHTML = `
+      <div><strong>Edition</strong> · ${state.filename}</div>
+      <div>${results.timestamp.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
+    `;
+  }
+
+  renderKPIs(results.kpis);
+  renderMerchantSummary(results.merchantSummary);
+  renderReconTable(results.txnResults);
+  renderExceptions(results.txnResults);
+  renderDeposits(results.depositMatches);
+  renderDQ(results.dataQuality);
+}
+
+function showView(viewId) {
+  ['uploadView', 'loadingView', 'reportView', 'errorView'].forEach(id => {
+    document.getElementById(id).classList.toggle('hidden', id !== viewId);
+  });
+}
+
+function showError(msg) {
+  document.getElementById('errorMsg').textContent = msg;
+  showView('errorView');
+}
+
+function resetUI() {
+  state = { filename: '', workbook: null, results: null };
+  document.getElementById('fileInput').value = '';
+  document.getElementById('newFileBtn').classList.add('hidden');
+  document.getElementById('downloadBtn').classList.add('hidden');
+  showView('uploadView');
+}
+
+// ============================================================
+// Download report as Excel
+// ============================================================
+function downloadReport() {
+  if (!state.results || !state.workbook) return;
+  const results = state.results;
+
+  // Build new workbook by cloning original + adding report sheets
+  const out = XLSX.utils.book_new();
+
+  // Sheet 1: Dashboard summary
+  const dashRows = [
+    ['Reconciliation Report'],
+    ['Source file', state.filename],
+    ['Generated', results.timestamp.toLocaleString()],
+    [],
+    ['KPI', 'Count', '%'],
+    ['Total transactions', results.kpis.total, '100.0%'],
+    ['Reconciled', results.kpis.reconciled, (results.kpis.reconciledPct * 100).toFixed(1) + '%'],
+    ['Confirm missing', results.kpis.confirmMissing, ((results.kpis.confirmMissing / results.kpis.total) * 100).toFixed(1) + '%'],
+    ['Dispatch missing', results.kpis.dispatchMissing, ((results.kpis.dispatchMissing / results.kpis.total) * 100).toFixed(1) + '%'],
+    ['Both missing', results.kpis.bothMissing, ((results.kpis.bothMissing / results.kpis.total) * 100).toFixed(1) + '%'],
+    ['Unbalanced', results.kpis.unbalanced, ((results.kpis.unbalanced / results.kpis.total) * 100).toFixed(1) + '%'],
+    ['Amount mismatch', results.kpis.amtMismatch, ((results.kpis.amtMismatch / results.kpis.total) * 100).toFixed(1) + '%'],
+    [],
+    ['Merchant deposit summary'],
+    ['Variance = Deposited − Gross collection. ~0 = match, positive = wallet balance/multi-currency, negative = under-funded or missing deposit.'],
+    ['Merchant', 'Currencies', 'Txns', 'Gross', 'Deposited', 'Variance', 'Deposit count', 'Earliest deposit', 'Latest deposit'],
+    ...results.merchantSummary.map(r => [
+      r.merchant, r.currencies, r.txnCount, r.gross, r.deposited, r.variance,
+      r.depCount,
+      r.earliestDep ? fmtDate(r.earliestDep) : '',
+      r.latestDep ? fmtDate(r.latestDep) : '',
+    ]),
+  ];
+  const dashSheet = XLSX.utils.aoa_to_sheet(dashRows);
+  dashSheet['!cols'] = [{ wch: 36 }, { wch: 14 }, { wch: 10 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 18 }, { wch: 18 }];
+  XLSX.utils.book_append_sheet(out, dashSheet, 'Dashboard');
+
+  // Sheet 2: Reconciliation detail
+  const reconHeader = ['#', 'Created', 'Merchant', 'Confirm Ref', 'Dispatched Ref', 'Collection', 'SC', 'Net Amt',
+    'Park Confirm', 'Park Confirm Date', 'Park Dispatch', 'Park Dispatch Date',
+    'Park Amt', 'Amt Variance',
+    'Disp Σdr', 'Disp Σcr', 'Disp Net', 'Disp Date', 'Status'];
+  const reconData = [reconHeader, ...results.txnResults.map(r => [
+    r.num,
+    fmtDate(r.createdDate),
+    r.merchant, r.confirmRef, r.dispatchRef,
+    r.collAmt, r.sc, r.netAmt,
+    r.parkConfirmExists ? 'OK' : 'Missing',
+    r.parkConfirmDate ? fmtDate(r.parkConfirmDate) : '',
+    r.parkDispatchExists ? 'OK' : 'Missing',
+    r.parkDispatchDate ? fmtDate(r.parkDispatchDate) : '',
+    r.parkAmt,
+    r.amtVarianceLabel === 'FX' ? 'FX' : r.amtVariance,
+    r.dispSumDr, r.dispSumCr, r.dispNet,
+    r.dispDate ? fmtDate(r.dispDate) : '',
+    r.status,
+  ])];
+  const reconSheet = XLSX.utils.aoa_to_sheet(reconData);
+  reconSheet['!cols'] = [{wch:6},{wch:18},{wch:30},{wch:26},{wch:38},{wch:14},{wch:8},{wch:14},
+    {wch:14},{wch:18},{wch:14},{wch:18},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14},{wch:18},{wch:18}];
+  XLSX.utils.book_append_sheet(out, reconSheet, 'Reconciliation');
+
+  // Sheet 3: Exceptions
+  const exceptions = results.txnResults.filter(r => r.status !== 'Reconciled');
+  if (exceptions.length) {
+    const excData = [
+      ['#', 'TXN Created', 'Merchant', 'Confirm Ref', 'Dispatched Ref', 'Net Amt',
+       'Park Confirm Date', 'Park Dispatch Date', 'Disp Date', 'Issue'],
+      ...exceptions.map(r => [r.num,
+        fmtDate(r.createdDate),
+        r.merchant, r.confirmRef, r.dispatchRef, r.netAmt,
+        r.parkConfirmExists ? fmtDate(r.parkConfirmDate) : 'NOT FOUND',
+        r.parkDispatchExists ? fmtDate(r.parkDispatchDate) : 'NOT FOUND',
+        r.dispCount > 0 ? fmtDate(r.dispDate) : 'NOT FOUND',
+        r.status])
+    ];
+    const excSheet = XLSX.utils.aoa_to_sheet(excData);
+    excSheet['!cols'] = [{wch:6},{wch:18},{wch:30},{wch:26},{wch:38},{wch:14},{wch:18},{wch:18},{wch:18},{wch:22}];
+    XLSX.utils.book_append_sheet(out, excSheet, 'Exceptions');
+  }
+
+  // Sheet 4: Deposit matching
+  if (results.depositMatches && results.depositMatches.length) {
+    const depData = [
+      ['Note: Balance reconciliation. Each deposit cr entry checked against a single txn amount OR a batch_id sum.'],
+      ['Date', 'Merchant', 'Amount', 'Match Type', 'Matched To'],
+      ...results.depositMatches.map(d => [
+        fmtDate(d.date),
+        d.merchant,
+        d.amount,
+        d.matchType === 'single' ? 'Single txn'
+          : d.matchType === 'batch' ? 'Batch sum'
+          : d.matchType === 'multi-batch' ? 'Multi-batch'
+          : 'Unmatched',
+        d.matchDetail || '',
+      ])
+    ];
+    const depSheet = XLSX.utils.aoa_to_sheet(depData);
+    depSheet['!cols'] = [{wch:18},{wch:34},{wch:14},{wch:14},{wch:38}];
+    XLSX.utils.book_append_sheet(out, depSheet, 'Deposit Matching');
+  }
+
+  // Sheet 4: Data Quality
+  if (results.dataQuality.length) {
+    const dqData = [['#', 'Issue', 'Where', 'Recommendation'],
+      ...results.dataQuality.map((d, i) => [i+1, d.title, d.where, d.detail])];
+    const dqSheet = XLSX.utils.aoa_to_sheet(dqData);
+    dqSheet['!cols'] = [{wch:6},{wch:42},{wch:36},{wch:60}];
+    XLSX.utils.book_append_sheet(out, dqSheet, 'Data Quality');
+  }
+
+  // Append original sheets so the report is self-contained
+  for (const name of state.workbook.SheetNames) {
+    XLSX.utils.book_append_sheet(out, state.workbook.Sheets[name], name.substring(0, 31));
+  }
+
+  const stamp = results.timestamp.toISOString().slice(0, 10);
+  const outName = state.filename.replace(/\.xlsx?$/i, '') + '__Reconciled_' + stamp + '.xlsx';
+  XLSX.writeFile(out, outName);
+}
+
+// ============================================================
+// Event wiring
+// ============================================================
+// Initialize masthead date
+const today = new Date();
+document.getElementById('mastheadDate').textContent = today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length) processFile(e.target.files[0]);
+});
+
+['dragenter', 'dragover'].forEach(evt => {
+  dropzone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropzone.classList.add('dragging');
+  });
+});
+['dragleave', 'drop'].forEach(evt => {
+  dropzone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropzone.classList.remove('dragging');
+  });
+});
+dropzone.addEventListener('drop', (e) => {
+  if (e.dataTransfer.files.length) {
+    const f = e.dataTransfer.files[0];
+    if (/\.xlsx?$|\.xlsm$/i.test(f.name)) {
+      processFile(f);
+    } else {
+      showError('Please upload a .xlsx, .xls, or .xlsm file.');
+    }
+  }
+});
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// Reconciliation filters
+document.getElementById('reconSearch').addEventListener('input', () => {
+  if (state.results) renderReconTable(state.results.txnResults);
+});
+document.getElementById('reconStatusFilter').addEventListener('change', () => {
+  if (state.results) renderReconTable(state.results.txnResults);
+});
+
+// Deposit filters
+document.getElementById('depSearch').addEventListener('input', () => {
+  if (state.results) renderDeposits(state.results.depositMatches);
+});
+document.getElementById('depFilter').addEventListener('change', () => {
+  if (state.results) renderDeposits(state.results.depositMatches);
+});
+
+</script>
+</body>
+</html>
