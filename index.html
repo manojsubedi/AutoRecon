@@ -948,6 +948,68 @@
     .section-head .section-meta { text-align: left; }
     .tab { padding: 10px 8px; }
   }
+
+  /* ───────── Verify (guideline pre-close checklist) ───────── */
+  .verify-intro {
+    color: var(--ink-3);
+    font-size: 13px;
+    margin-bottom: 16px;
+    line-height: 1.6;
+  }
+  .verify-verdict {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 18px 20px;
+    border-radius: var(--radius-lg);
+    margin-bottom: 18px;
+    border: 1px solid var(--line);
+  }
+  .verify-verdict.ok { background: var(--good-bg); border-color: #bbf7d0; }
+  .verify-verdict.stop { background: var(--bad-bg); border-color: #fecaca; }
+  .verify-verdict .vv-mark {
+    width: 40px; height: 40px; flex: none;
+    border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 700; color: #fff;
+  }
+  .verify-verdict.ok .vv-mark { background: var(--good); }
+  .verify-verdict.stop .vv-mark { background: var(--bad); }
+  .verify-verdict .vv-title { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+  .verify-verdict.ok .vv-title { color: var(--good); }
+  .verify-verdict.stop .vv-title { color: var(--bad); }
+  .verify-verdict .vv-sub { font-size: 13px; color: var(--ink-3); margin-top: 2px; }
+
+  .verify-card {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    box-shadow: var(--shadow-sm);
+  }
+  .verify-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .verify-badge {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 3px 9px; border-radius: 999px; flex: none;
+  }
+  .verify-title { font-weight: 600; font-size: 14px; color: var(--ink); }
+  .verify-ref { margin-left: auto; font-size: 11.5px; color: var(--ink-4); font-family: 'Geist Mono', monospace; }
+  .verify-summary { color: var(--ink-2); font-size: 13px; margin-top: 8px; line-height: 1.6; }
+  .verify-items {
+    margin: 10px 0 2px; padding: 10px 14px;
+    background: var(--bg-muted); border-radius: var(--radius-sm);
+    list-style: none; max-height: 260px; overflow-y: auto;
+  }
+  .verify-items li {
+    font-family: 'Geist Mono', monospace; font-size: 12px;
+    color: var(--ink-2); padding: 3px 0; border-bottom: 1px solid var(--line);
+  }
+  .verify-items li:last-child { border-bottom: none; }
+  @media (max-width: 640px) {
+    .verify-ref { margin-left: 0; width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -1146,13 +1208,19 @@
         <span class="section-meta">Cross-tab match by reference key</span>
       </div>
       <div class="tabs">
-        <button class="tab active" data-tab="recon">Reconciliation <span class="count" id="reconCount">0</span></button>
+        <button class="tab active" data-tab="verify">Verify <span class="count" id="verifyCount">0</span></button>
+        <button class="tab" data-tab="recon">Reconciliation <span class="count" id="reconCount">0</span></button>
         <button class="tab" data-tab="exceptions">Exceptions <span class="count" id="excCount">0</span></button>
         <button class="tab" data-tab="deposits">Unmatched deposits <span class="count" id="depCount">0</span></button>
         <button class="tab" data-tab="dq">Data quality <span class="count" id="dqCount">0</span></button>
       </div>
 
-      <div class="tab-panel active" id="panel-recon">
+      <div class="tab-panel active" id="panel-verify">
+        <p class="verify-intro">Each check below maps to the <strong>GMEBiz Reconciliation Guidelines</strong> pre-close checklist. Read top to bottom — anything marked <span class="verify-badge" style="color:var(--bad);background:var(--bad-bg)">Blocker</span> or <span class="verify-badge" style="color:var(--bad);background:var(--bad-bg)">Break</span> must be cleared before period close.</p>
+        <div id="verifyGrid"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-recon">
         <div class="filter-bar">
           <input type="search" id="reconSearch" placeholder="Search by merchant, reference, txn #…">
           <select id="reconStatusFilter">
@@ -1500,7 +1568,7 @@ function reconcile(workbook) {
     const collAmt = toNum(r.collection_amount);
     const sc = toNum(r.service_charge);
     const netAmt = collAmt - sc;
-    const collCcy = r.collection_currency || '';
+    const collCcy = (r.merchant_collection_ccy ?? r.collection_currency) || '';
     const createdDate = r.created_date || r.processing_date;
 
     // Parking confirm match
@@ -1877,9 +1945,9 @@ function reconcile(workbook) {
     // Heuristic: collection_amount in KRW, settlement_amount in foreign ccy → rate = collection / settlement.
     // But for cross-currency merchants, we want the rate to convert their foreign txns into KRW deposits.
     // Use the explicit coll_vs_sett_rate when collection is in KRW and merchant_collection_ccy matches.
-    const collCcy = r.collection_currency;
+    const collCcy = (r.merchant_collection_ccy ?? r.collection_currency);
     const merchCcy = r.merchant_collection_ccy;
-    const rate = toNum(r.coll_vs_sett_rate);
+    const rate = toNum(r.merchant_coll_vs_sett_rate ?? r.partner_coll_vs_sett_rate ?? r.coll_vs_sett_rate);
     if (collCcy === 'KRW' && merchCcy === 'KRW' && rate > 100) {
       // This is a KRW txn paired with a foreign-currency settlement.
       // The rate tells us KRW-per-settlement-unit (e.g., 1443 KRW/USD).
@@ -1911,7 +1979,7 @@ function reconcile(workbook) {
   const merchTxnCcy = new Map();
   for (const r of txnRows) {
     const m = r.merchant || 'Unknown';
-    const c = r.collection_currency;
+    const c = (r.merchant_collection_ccy ?? r.collection_currency);
     if (!c || c === 'KRW') continue;
     merchTxnCcy.set(m, c);
   }
@@ -2054,7 +2122,8 @@ function reconcile(workbook) {
     const agg = merchAgg.get(m);
     agg.count++;
     agg.gross += toNum(r.collection_amount);
-    if (r.collection_currency) agg.ccys.add(r.collection_currency);
+    const aggCcy = (r.merchant_collection_ccy ?? r.collection_currency);
+    if (aggCcy) agg.ccys.add(aggCcy);
   }
   const merchantSummary = [...merchAgg.entries()].map(([m, agg]) => {
     // Match deposit by employeeName starting with merchant name
@@ -2129,14 +2198,162 @@ function reconcile(workbook) {
     unmatchedDepAmt,
   };
 
+  const dqList = [...dqSet].map(s => JSON.parse(s));
+
+  const guidelineChecks = computeGuidelineChecks({
+    txnRows, depRows, parkRows, dispRows, txnResults, merchantSummary, dataQuality: dqList,
+  });
+
   return {
     kpis,
     merchantSummary,
     txnResults,
     depositMatches,
-    dataQuality: [...dqSet].map(s => JSON.parse(s)),
+    dataQuality: dqList,
+    guidelineChecks,
     timestamp: new Date(),
   };
+}
+
+// ============================================================
+// Guideline verification — maps the pre-close checklist to the data.
+// Each check: { id, title, ref, status: pass|review|fail|blocker, summary, items[] }
+// ============================================================
+function computeGuidelineChecks(ctx) {
+  const { txnRows, depRows, parkRows, dispRows, txnResults, merchantSummary, dataQuality } = ctx;
+  const checks = [];
+  // TXNDetails currency column was renamed to merchant_collection_ccy in newer exports.
+  const ccyOf = r => String(r.merchant_collection_ccy ?? r.collection_currency ?? '').trim();
+  const ctrlOf = r => r.merchant_control_number ?? r['#'];
+
+  // 1 — No transaction left in Processing (hard blocker per §7 / checklist #5)
+  const processing = txnRows.filter(r => String(r.txn_status || '').toUpperCase() === 'PROCESSING');
+  checks.push({
+    id: 'processing',
+    title: 'No transaction left in Processing',
+    ref: 'Checklist #5 · §7 Status Blocking',
+    status: processing.length ? 'blocker' : 'pass',
+    summary: processing.length
+      ? processing.length + ' transaction(s) still in Processing — period close is BLOCKED until engineering clears them.'
+      : 'Every transaction has cleared Processing status.',
+    items: processing.map(r => 'TXN ' + ctrlOf(r) + ' · ' + (r.merchant || '') + ' · ' + fmtDateShort(parseToDate(r.created_date))),
+  });
+
+  // 2 — Every transaction has a confirm and dispatch voucher (flow check, checklist #1/#2)
+  const createdTimes = txnRows.map(r => parseToDate(r.created_date)).filter(Boolean).map(d => d.getTime());
+  const LAG_DAYS = 3;
+  const edgeCut = createdTimes.length ? Math.max(...createdTimes) - LAG_DAYS * 86400 * 1000 : null;
+  const missing = txnResults.filter(r => !r.parkConfirmExists || !r.parkDispatchExists);
+  const genuine = [], edge = [];
+  for (const r of missing) {
+    const d = parseToDate(r.createdDate);
+    if (edgeCut !== null && d && d.getTime() >= edgeCut) edge.push(r); else genuine.push(r);
+  }
+  const legLabel = r => (!r.parkConfirmExists && !r.parkDispatchExists) ? 'confirm + dispatch missing'
+    : (!r.parkConfirmExists ? 'confirm missing' : 'dispatch missing');
+  checks.push({
+    id: 'vouchers',
+    title: 'Every transaction has a confirm and dispatch voucher',
+    ref: 'Checklist #1 & #2 · Flow check',
+    status: genuine.length ? 'fail' : (edge.length ? 'review' : 'pass'),
+    summary: genuine.length
+      ? genuine.length + ' genuine break(s) missing a voucher leg'
+        + (edge.length ? ', plus ' + edge.length + ' at the window edge (created within ' + LAG_DAYS + ' days — legs likely still posting).' : '.')
+      : (edge.length
+          ? edge.length + ' transaction(s) missing a leg, but all created within ' + LAG_DAYS + ' days of the extract — likely late-posting, not real breaks.'
+          : 'All ' + txnResults.length + ' transactions trace cleanly through confirm and dispatch.'),
+    items: genuine.map(r => 'BREAK · #' + r.num + ' · ' + r.merchant + ' · ' + legLabel(r) + ' · ' + fmtDateShort(parseToDate(r.createdDate)))
+      .concat(edge.map(r => 'edge · #' + r.num + ' · ' + r.merchant + ' · ' + legLabel(r) + ' · ' + fmtDateShort(parseToDate(r.createdDate)))),
+  });
+
+  // 3 — Total collections = total deposits, per merchant (the core control)
+  const TOL = 1; // KRW
+  const under = [], floats = [], fx = [];
+  for (const m of merchantSummary) {
+    if (m.currencies !== 'KRW') { fx.push(m); continue; }
+    if (m.variance < -TOL) under.push(m);
+    else if (m.variance > TOL || m.unmatchedDeps > 0) floats.push(m);
+  }
+  checks.push({
+    id: 'identity',
+    title: 'Total collections = total deposits, per merchant',
+    ref: 'Core control · Checklist #1',
+    status: under.length ? 'fail' : ((floats.length || fx.length) ? 'review' : 'pass'),
+    summary: under.length
+      ? under.length + ' merchant(s) under-funded — collections exceed deposits. Investigate before close.'
+      : ((floats.length || fx.length)
+          ? (floats.length ? floats.length + ' merchant(s) with a positive residual (wallet float or unmatched deposit). ' : '')
+            + (fx.length ? fx.length + ' USD/FX merchant(s) reconciled cross-currency — verify with the recorded rate.' : '')
+          : 'Deposits equal collections for every merchant.'),
+    items: under.map(m => 'UNDER · ' + m.merchant + ' · coll ' + fmt(m.gross) + ' vs dep ' + fmt(m.deposited) + ' · Δ ' + fmt(m.variance))
+      .concat(floats.map(m => 'float · ' + m.merchant + ' · Δ ' + fmt(m.variance) + (m.unmatchedDeps ? ' · ' + m.unmatchedDeps + ' unmatched dep' : '')))
+      .concat(fx.map(m => 'FX · ' + m.merchant + ' (' + m.currencies + ') · coll ' + fmt(m.gross) + ' vs dep ' + fmt(m.deposited))),
+  });
+
+  // 4 — Dispatched legs net to zero (checklist #7 / golden rule)
+  const unbal = txnResults.filter(r => r.dispCount > 0 && Math.abs(r.dispNet) > 0.01);
+  checks.push({
+    id: 'balance',
+    title: 'Dispatched legs net to zero (ΣDR = ΣCR)',
+    ref: 'Checklist #7 · Golden Rule',
+    status: unbal.length ? 'fail' : 'pass',
+    summary: unbal.length
+      ? unbal.length + ' dispatch reference(s) do not net to zero.'
+      : 'Every dispatch reference balances — debits equal credits.',
+    items: unbal.map(r => '#' + r.num + ' · ' + r.merchant + ' · net ' + fmt(r.dispNet, 2)),
+  });
+
+  // 5 — Reversals captured & mirrored (checklist #6 / §6.1)
+  const depRev = depRows.filter(r => { const t = String(r.part_tran_type || '').trim(); return t === 'CR' || t === 'DR'; }).length;
+  const parkRev = parkRows.filter(r => String(r.field2 || '').includes('rever')).length;
+  const dispRev = dispRows.filter(r => String(r.field2 || '').includes('rever')).length;
+  const anyRev = depRev + parkRev;
+  checks.push({
+    id: 'reversals',
+    title: 'Reversals are captured and mirrored',
+    ref: 'Checklist #6 · §6.1',
+    status: anyRev ? 'review' : 'pass',
+    summary: anyRev
+      ? anyRev + ' reversal leg(s) present (deposit ' + depRev + ', parking ' + parkRev + '). The Dispatched tab carries ' + dispRev
+        + ' reversal rows — dispatch reversals (biz.mar.pmnt.dp.reverese) are excluded by the Dispatched query, so their mirror leg cannot be verified here. Fix the query filter to LIKE ‘biz.mar.pmnt.dp%’.'
+      : 'No reversals recorded this period.',
+    items: [],
+  });
+
+  // 6 — USD transactions carry a recorded FX rate (checklist #4 / §5)
+  const usd = txnRows.filter(r => ccyOf(r) === 'USD');
+  const hasRate = r => {
+    const ok = v => v != null && v !== '[NULL]' && String(v).trim() !== '';
+    return ok(r.st_rate) || ok(r.merchant_coll_vs_sett_rate) || ok(r.partner_coll_vs_sett_rate);
+  };
+  const usdNoRate = usd.filter(r => !hasRate(r));
+  checks.push({
+    id: 'fxrate',
+    title: 'USD transactions carry a recorded FX rate',
+    ref: 'Checklist #4 · §5 Currency Rules',
+    status: usd.length === 0 ? 'pass' : (usdNoRate.length ? 'fail' : 'pass'),
+    summary: usd.length === 0
+      ? 'No USD-collection transactions this period.'
+      : (usdNoRate.length
+          ? usdNoRate.length + ' of ' + usd.length + ' USD transactions have no recorded rate.'
+          : 'All ' + usd.length + ' USD transactions carry a recorded rate — reconcile USD→USD directly instead of inferring a band.'),
+    items: usdNoRate.slice(0, 30).map(r => '#' + r['#'] + ' · ' + r.merchant + ' · ' + fmtDateShort(parseToDate(r.created_date))),
+  });
+
+  // 7 — Source data format is clean (data hygiene at the query/export layer)
+  const dq = dataQuality || [];
+  checks.push({
+    id: 'hygiene',
+    title: 'Source data format is clean',
+    ref: 'Data quality · fix at export',
+    status: dq.length ? 'review' : 'pass',
+    summary: dq.length
+      ? dq.length + ' formatting issue(s) at source (see the Data quality tab) — not breaks, but fix them in the export query.'
+      : 'No formatting issues detected across the four tabs.',
+    items: dq.map(d => d.title),
+  });
+
+  return checks;
 }
 
 // ============================================================
@@ -2473,6 +2690,56 @@ function renderDQ(items) {
   document.getElementById('dqCount').textContent = items.length;
 }
 
+function renderVerify(checks) {
+  const el = document.getElementById('verifyGrid');
+  if (!checks || !checks.length) { el.innerHTML = ''; return; }
+
+  const rank = { blocker: 0, fail: 1, review: 2, pass: 3 };
+  const sorted = checks.slice().sort((a, b) => rank[a.status] - rank[b.status]);
+  const nBlock = checks.filter(c => c.status === 'blocker').length;
+  const nFail = checks.filter(c => c.status === 'fail').length;
+  const nRev = checks.filter(c => c.status === 'review').length;
+  const nPass = checks.filter(c => c.status === 'pass').length;
+  const ready = nBlock === 0 && nFail === 0;
+
+  const meta = {
+    blocker: ['Blocker', 'var(--bad)', 'var(--bad-bg)'],
+    fail: ['Break', 'var(--bad)', 'var(--bad-bg)'],
+    review: ['Review', 'var(--warn)', 'var(--warn-bg)'],
+    pass: ['Pass', 'var(--good)', 'var(--good-bg)'],
+  };
+
+  const verdict = `
+    <div class="verify-verdict ${ready ? 'ok' : 'stop'}">
+      <span class="vv-mark">${ready ? '✓' : '✗'}</span>
+      <div class="vv-text">
+        <div class="vv-title">${ready ? 'Ready for period close' : 'Not ready for period close'}</div>
+        <div class="vv-sub">${nBlock} blocker · ${nFail} break · ${nRev} to review · ${nPass} passed</div>
+      </div>
+    </div>`;
+
+  const cards = sorted.map(c => {
+    const [label, col, bg] = meta[c.status];
+    const items = (c.items && c.items.length)
+      ? `<ul class="verify-items">${c.items.slice(0, 60).map(i => '<li>' + escapeHtml(i) + '</li>').join('')}${c.items.length > 60 ? '<li>… ' + (c.items.length - 60) + ' more</li>' : ''}</ul>`
+      : '';
+    return `
+      <div class="verify-card" style="border-left-color:${col}">
+        <div class="verify-head">
+          <span class="verify-badge" style="color:${col};background:${bg}">${label}</span>
+          <span class="verify-title">${escapeHtml(c.title)}</span>
+          <span class="verify-ref">${escapeHtml(c.ref)}</span>
+        </div>
+        <div class="verify-summary">${escapeHtml(c.summary)}</div>
+        ${items}
+      </div>`;
+  }).join('');
+
+  el.innerHTML = verdict + cards;
+  const badge = document.getElementById('verifyCount');
+  if (badge) badge.textContent = nBlock + nFail + nRev;
+}
+
 function escapeHtml(s) {
   if (s === null || s === undefined) return '';
   return String(s).replace(/[&<>"']/g, c => ({
@@ -2535,6 +2802,7 @@ function renderReport(results) {
   }
 
   renderKPIs(results.kpis);
+  renderVerify(results.guidelineChecks);
   renderMerchantSummary(results.merchantSummary);
   renderReconTable(results.txnResults);
   renderExceptions(results.txnResults);
