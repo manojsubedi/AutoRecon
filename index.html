@@ -1365,6 +1365,20 @@ function fmtDateShort(v) {
   return fmtDate(v, false);
 }
 
+// A dispatch reference is [batch-]control-extMapId. The ext_map_id_1 suffix legitimately
+// changes when a txn is (re-)pushed to the partner, so the stable join key is everything
+// before the last '-' (= the GME control key, same as the Confirm Reference).
+function stripExtMap(s) {
+  const str = s == null ? '' : String(s).trim();
+  const i = str.lastIndexOf('-');
+  return i > 0 ? str.slice(0, i) : str;
+}
+function lastSeg(s) {
+  const str = s == null ? '' : String(s).trim();
+  const i = str.lastIndexOf('-');
+  return i >= 0 ? str.slice(i + 1) : '';
+}
+
 function findSheet(workbook, name) {
   // Case-insensitive, trimmed match
   const target = name.toLowerCase().trim();
@@ -1428,8 +1442,9 @@ function reconcile(workbook) {
       parkConfirmIdx.get(billno).push({ amt, date, raw: r });
     }
     if (field2 === 'biz.mar.pmnt.dp' && type === 'dr' && field1) {
-      if (!parkDispatchIdx.has(field1)) parkDispatchIdx.set(field1, []);
-      parkDispatchIdx.get(field1).push({ amt, date, raw: r });
+      const dkey = stripExtMap(field1);
+      if (!parkDispatchIdx.has(dkey)) parkDispatchIdx.set(dkey, []);
+      parkDispatchIdx.get(dkey).push({ amt, date, field1, raw: r });
     }
   }
 
@@ -1438,10 +1453,11 @@ function reconcile(workbook) {
   for (const r of dispRows) {
     const field1 = r.field1 == null ? '' : String(r.field1).trim();
     if (!field1) continue;
+    const dkey = stripExtMap(field1);
     const type = r.part_tran_type == null ? '' : String(r.part_tran_type).toLowerCase().trim();
     const amt = toNum(r.tran_amt);
-    if (!dispIdx.has(field1)) dispIdx.set(field1, { sumDr: 0, sumCr: 0, count: 0, dates: [] });
-    const entry = dispIdx.get(field1);
+    if (!dispIdx.has(dkey)) dispIdx.set(dkey, { sumDr: 0, sumCr: 0, count: 0, dates: [], field1, refNum: r.ref_num });
+    const entry = dispIdx.get(dkey);
     if (type === 'dr') entry.sumDr += amt;
     else if (type === 'cr') entry.sumCr += amt;
     entry.count++;
@@ -1575,9 +1591,13 @@ function reconcile(workbook) {
     const parkConfirm = parkConfirmIdx.get(confirmRef);
     const parkConfirmExists = !!parkConfirm && parkConfirm.length > 0;
     const parkConfirmDate = parkConfirmExists ? parkConfirm[0].date : null;
+    const confirmVoucherRef = parkConfirmExists ? (parkConfirm[0].raw && parkConfirm[0].raw.ref_num) : null;
 
-    // Parking dispatch match
-    const parkDispatch = parkDispatchIdx.get(dispatchRef);
+    // Parking dispatch match — on the stable GME control key (ext_map_id_1 stripped), because
+    // the partner assigns a new ext_map_id_1 when a txn is (re-)dispatched. See remark below.
+    const dispKey = stripExtMap(dispatchRef);
+    const txnExtMap = lastSeg(dispatchRef);
+    const parkDispatch = parkDispatchIdx.get(dispKey);
     const parkDispatchExists = !!parkDispatch && parkDispatch.length > 0;
     const parkDispatchDate = parkDispatchExists ? parkDispatch[0].date : null;
 
@@ -1596,13 +1616,24 @@ function reconcile(workbook) {
       amtVarianceLabel = 'FX';
     }
 
-    // Dispatched legs
-    const disp = dispIdx.get(dispatchRef);
+    // Dispatched legs (keyed on the same GME control key)
+    const disp = dispIdx.get(dispKey);
     const dispSumDr = disp ? disp.sumDr : 0;
     const dispSumCr = disp ? disp.sumCr : 0;
     const dispNet = dispSumDr - dispSumCr;
     const dispCount = disp ? disp.count : 0;
     const dispDate = disp && disp.dates.length ? disp.dates[0] : null;
+    const dispVoucherRef = disp ? disp.refNum
+      : (parkDispatchExists ? (parkDispatch[0].raw && parkDispatch[0].raw.ref_num) : null);
+
+    // Remark: dispatch found on GME control key but the partner's ext_map_id_1 differs from
+    // the one recorded in TXNDetails — normal after a (re-)dispatch. Keep BOTH ids as a remark.
+    const voucherField1 = disp ? disp.field1 : (parkDispatchExists ? parkDispatch[0].field1 : '');
+    const voucherExtMap = lastSeg(voucherField1);
+    let extMapRemark = '';
+    if ((parkDispatchExists || dispCount > 0) && txnExtMap && voucherExtMap && txnExtMap !== voucherExtMap) {
+      extMapRemark = 'ext_map_id_1 differs — TXN ' + txnExtMap + ' / voucher ' + voucherExtMap + ' (re-dispatched to partner)';
+    }
 
     // Determine overall status
     let status;
@@ -1637,8 +1668,13 @@ function reconcile(workbook) {
       createdDate,
       parkConfirmExists,
       parkConfirmDate,
+      confirmVoucherRef,
       parkDispatchExists,
       parkDispatchDate,
+      dispVoucherRef,
+      txnExtMap,
+      voucherExtMap,
+      extMapRemark,
       parkAmt,
       amtVariance,
       amtVarianceLabel,
@@ -2262,8 +2298,25 @@ function computeGuidelineChecks(ctx) {
       : (edge.length
           ? edge.length + ' transaction(s) missing a leg, but all created within ' + LAG_DAYS + ' days of the extract — likely late-posting, not real breaks.'
           : 'All ' + txnResults.length + ' transactions trace cleanly through confirm and dispatch.'),
-    items: genuine.map(r => 'BREAK · #' + r.num + ' · ' + r.merchant + ' · ' + legLabel(r) + ' · ' + fmtDateShort(parseToDate(r.createdDate)))
+    items: genuine.map(r => 'BREAK · #' + r.num + ' · ' + r.merchant + ' · ' + legLabel(r)
+        + (r.confirmVoucherRef ? ' · confirm ' + r.confirmVoucherRef : '') + (r.dispVoucherRef ? ' · dispatch ' + r.dispVoucherRef : '')
+        + ' · ' + fmtDateShort(parseToDate(r.createdDate)))
       .concat(edge.map(r => 'edge · #' + r.num + ' · ' + r.merchant + ' · ' + legLabel(r) + ' · ' + fmtDateShort(parseToDate(r.createdDate)))),
+  });
+
+  // 2b — Re-dispatched to partner: matched on GME control key + amount but ext_map_id_1 differs.
+  // Not a break — surface both ids as a remark so the divergence is visible.
+  const redis = txnResults.filter(r => r.extMapRemark);
+  checks.push({
+    id: 'redispatch',
+    title: 'Re-dispatched to partner (ext_map_id_1 differs)',
+    ref: 'Matched by GME control # + amount',
+    status: redis.length ? 'review' : 'pass',
+    summary: redis.length
+      ? redis.length + ' transaction(s) matched their dispatch voucher on the GME control # even though the partner’s ext_map_id_1 differs from TXNDetails (normal after a re-push). Both ids kept as a remark — not breaks.'
+      : 'No ext_map_id_1 divergences — every dispatch reference matches exactly.',
+    items: redis.map(r => '#' + r.num + ' · ' + r.merchant + ' · voucher ' + (r.dispVoucherRef || '—')
+      + ' · ext_map TXN ' + r.txnExtMap + ' / voucher ' + r.voucherExtMap),
   });
 
   // 3 — Total collections = total deposits, per merchant (the core control)
@@ -2535,7 +2588,7 @@ function renderExceptions(rows) {
   const exceptions = rows.filter(r => r.status !== 'Reconciled');
   const table = document.getElementById('excTable');
   if (exceptions.length === 0) {
-    table.innerHTML = `<tbody><tr><td colspan="8" style="text-align: center; padding: 48px; color: var(--ink-3);">
+    table.innerHTML = `<tbody><tr><td colspan="9" style="text-align: center; padding: 48px; color: var(--ink-3);">
       <strong style="display:block; font-size: 16px; color: var(--good); margin-bottom: 6px;">✓ Nothing to flag</strong>
       Every transaction reconciles cleanly across all four stages.
     </td></tr></tbody>`;
@@ -2548,6 +2601,7 @@ function renderExceptions(rows) {
         <th>Confirm ref</th>
         <th>Dispatched ref</th>
         <th class="num">Net amt</th>
+        <th>Voucher (ref_num)</th>
         <th>Found in</th>
         <th>Issue</th>
       </tr></thead>
@@ -2559,6 +2613,10 @@ function renderExceptions(rows) {
           if (r.parkDispatchExists) found.push(`<span style="color:var(--good)">Dispatch</span> ${fmtDate(r.parkDispatchDate)}`);
           if (r.dispCount > 0) found.push(`<span style="color:var(--good)">Disp legs (${r.dispCount})</span> ${fmtDate(r.dispDate)}`);
           if (found.length === 0) found.push('<span style="color:var(--bad)">Nothing yet</span>');
+          const vouchers = [];
+          vouchers.push('C: ' + (r.confirmVoucherRef ? escapeHtml(r.confirmVoucherRef) : '<span style="color:var(--bad)">missing</span>'));
+          vouchers.push('D: ' + (r.dispVoucherRef ? escapeHtml(r.dispVoucherRef) : '<span style="color:var(--bad)">missing</span>'));
+          const remark = r.extMapRemark ? `<div style="font-size:11px;color:var(--warn);margin-top:4px;">${escapeHtml(r.extMapRemark)}</div>` : '';
           return `
             <tr>
               <td class="mono">${escapeHtml(r.num)}</td>
@@ -2567,8 +2625,9 @@ function renderExceptions(rows) {
               <td class="mono" style="font-size: 12px;">${escapeHtml(r.confirmRef)}</td>
               <td class="mono" style="font-size: 12px;">${escapeHtml(r.dispatchRef)}</td>
               <td class="num mono">${fmt(r.netAmt)}</td>
+              <td class="mono" style="font-size: 11.5px; line-height: 1.6;">${vouchers.join('<br>')}</td>
               <td style="font-size: 11.5px; line-height: 1.6;">${found.join('<br>')}</td>
-              <td>${statusPill(r.status)}</td>
+              <td>${statusPill(r.status)}${remark}</td>
             </tr>
           `;
         }).join('')}
