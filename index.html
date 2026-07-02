@@ -1019,7 +1019,7 @@
     <div class="masthead">
       <span class="brand-mark">R</span>
       <div class="masthead-title">
-        <h1>Reconciliation</h1>
+        <h1>Reconciliation <span style="font-size:11px;font-weight:600;color:var(--ink-4);vertical-align:middle;font-family:'Geist Mono',monospace;">v1.2</span></h1>
         <span class="masthead-subtitle" id="mastheadDate">Transaction ledger cross-check</span>
       </div>
     </div>
@@ -2929,45 +2929,69 @@ function downloadReport() {
 
   // Sheet 2: Reconciliation detail
   const reconHeader = ['#', 'Created', 'Merchant', 'Confirm Ref', 'Dispatched Ref', 'Collection', 'SC', 'Net Amt',
-    'Park Confirm', 'Park Confirm Date', 'Park Dispatch', 'Park Dispatch Date',
+    'Park Confirm', 'Confirm Voucher', 'Park Confirm Date', 'Park Dispatch', 'Dispatch Voucher', 'Park Dispatch Date',
     'Park Amt', 'Amt Variance',
-    'Disp Σdr', 'Disp Σcr', 'Disp Net', 'Disp Date', 'Status'];
+    'Disp Σdr', 'Disp Σcr', 'Disp Net', 'Disp Date', 'Status', 'Remark'];
   const reconData = [reconHeader, ...results.txnResults.map(r => [
     r.num,
     fmtDate(r.createdDate),
     r.merchant, r.confirmRef, r.dispatchRef,
     r.collAmt, r.sc, r.netAmt,
     r.parkConfirmExists ? 'OK' : 'Missing',
+    r.confirmVoucherRef || '',
     r.parkConfirmDate ? fmtDate(r.parkConfirmDate) : '',
     r.parkDispatchExists ? 'OK' : 'Missing',
+    r.dispVoucherRef || '',
     r.parkDispatchDate ? fmtDate(r.parkDispatchDate) : '',
     r.parkAmt,
     r.amtVarianceLabel === 'FX' ? 'FX' : r.amtVariance,
     r.dispSumDr, r.dispSumCr, r.dispNet,
     r.dispDate ? fmtDate(r.dispDate) : '',
     r.status,
+    r.extMapRemark || '',
   ])];
   const reconSheet = XLSX.utils.aoa_to_sheet(reconData);
   reconSheet['!cols'] = [{wch:6},{wch:18},{wch:30},{wch:26},{wch:38},{wch:14},{wch:8},{wch:14},
-    {wch:14},{wch:18},{wch:14},{wch:18},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14},{wch:18},{wch:18}];
+    {wch:12},{wch:16},{wch:18},{wch:12},{wch:16},{wch:18},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14},{wch:18},{wch:16},{wch:52}];
   XLSX.utils.book_append_sheet(out, reconSheet, 'Reconciliation');
+
+  // Sheet: Verify (Pre-Close checklist) — mirrors the Verify tab
+  if (results.guidelineChecks && results.guidelineChecks.length) {
+    const statusText = { blocker: 'BLOCKER', fail: 'BREAK', review: 'REVIEW', pass: 'PASS' };
+    const vRows = [
+      ['Pre-Close Verification — maps to GMEBiz Reconciliation Guidelines'],
+      [],
+      ['Result', 'Check', 'Guideline', 'Summary'],
+    ];
+    for (const c of results.guidelineChecks) {
+      vRows.push([statusText[c.status] || c.status, c.title, c.ref, c.summary]);
+      for (const it of (c.items || [])) vRows.push(['', '', '', '   • ' + it]);
+    }
+    const vSheet = XLSX.utils.aoa_to_sheet(vRows);
+    vSheet['!cols'] = [{wch:10},{wch:44},{wch:34},{wch:90}];
+    XLSX.utils.book_append_sheet(out, vSheet, 'Verify');
+  }
 
   // Sheet 3: Exceptions
   const exceptions = results.txnResults.filter(r => r.status !== 'Reconciled');
   if (exceptions.length) {
     const excData = [
       ['#', 'TXN Created', 'Merchant', 'Confirm Ref', 'Dispatched Ref', 'Net Amt',
-       'Park Confirm Date', 'Park Dispatch Date', 'Disp Date', 'Issue'],
+       'Confirm Voucher (ref_num)', 'Dispatch Voucher (ref_num)',
+       'Park Confirm Date', 'Park Dispatch Date', 'Disp Date', 'Issue', 'Remark'],
       ...exceptions.map(r => [r.num,
         fmtDate(r.createdDate),
         r.merchant, r.confirmRef, r.dispatchRef, r.netAmt,
+        r.confirmVoucherRef || 'MISSING',
+        r.dispVoucherRef || 'MISSING',
         r.parkConfirmExists ? fmtDate(r.parkConfirmDate) : 'NOT FOUND',
         r.parkDispatchExists ? fmtDate(r.parkDispatchDate) : 'NOT FOUND',
         r.dispCount > 0 ? fmtDate(r.dispDate) : 'NOT FOUND',
-        r.status])
+        r.status,
+        r.extMapRemark || ''])
     ];
     const excSheet = XLSX.utils.aoa_to_sheet(excData);
-    excSheet['!cols'] = [{wch:6},{wch:18},{wch:30},{wch:26},{wch:38},{wch:14},{wch:18},{wch:18},{wch:18},{wch:22}];
+    excSheet['!cols'] = [{wch:6},{wch:18},{wch:30},{wch:26},{wch:38},{wch:14},{wch:22},{wch:22},{wch:18},{wch:18},{wch:18},{wch:22},{wch:52}];
     XLSX.utils.book_append_sheet(out, excSheet, 'Exceptions');
   }
 
