@@ -1226,6 +1226,7 @@
           <select id="reconStatusFilter">
             <option value="">All statuses</option>
             <option value="Reconciled">Reconciled</option>
+            <option value="Reconciled (ref mismatch)">Reconciled (ref mismatch)</option>
             <option value="Confirm missing">Confirm missing</option>
             <option value="Dispatch missing">Dispatch missing</option>
             <option value="Both missing">Both missing</option>
@@ -1491,6 +1492,47 @@ function reconcile(workbook) {
     }
   }
 
+  // ── Reference-key mismatch recovery index ─────────────────────────────────
+  // Some txns carry a control number in TXNDetails (Confirm/Dispatched Reference)
+  // that differs from the billno the core ledger actually used for the SAME
+  // payment. Those txns look "Both missing" even though the legs exist under the
+  // other number. To recover them, index every CONFIRM leg whose billno is NOT
+  // claimed by any txn's Confirm Reference, keyed by its (rounded) net amount, so a
+  // missing txn can be re-matched on net amount + created-date proximity.
+  const claimedConfirmBillnos = new Set();
+  for (const r of txnRows) {
+    const cr = r['Confirm Reference'] == null ? '' : String(r['Confirm Reference']).trim();
+    if (cr) claimedConfirmBillnos.add(cr);
+  }
+  const orphanConfirmByAmt = new Map();
+  for (const [billno, entries] of parkConfirmIdx) {
+    if (claimedConfirmBillnos.has(billno)) continue;
+    for (const e of entries) {
+      if (!Number.isFinite(e.amt)) continue;
+      const k = Math.round(e.amt);
+      if (!orphanConfirmByAmt.has(k)) orphanConfirmByAmt.set(k, []);
+      orphanConfirmByAmt.get(k).push({ billno, amt: e.amt, dateObj: parseToDate(e.date) });
+    }
+  }
+  const consumedOrphans = new Set();
+  const REF_MISMATCH_WINDOW_MS = 3 * 86400 * 1000; // ±3 days
+
+  // Find a unique unclaimed confirm leg matching a txn's net amount within the date
+  // window. Returns the recovered billno, or null when absent or ambiguous.
+  function recoverControlKey(netAmt, createdDate) {
+    if (!Number.isFinite(netAmt) || netAmt <= 0) return null;
+    const bucket = orphanConfirmByAmt.get(Math.round(netAmt));
+    if (!bucket) return null;
+    const txnDate = parseToDate(createdDate);
+    const distinct = new Set();
+    for (const e of bucket) {
+      if (consumedOrphans.has(e.billno)) continue;
+      if (txnDate && e.dateObj && Math.abs(e.dateObj - txnDate) > REF_MISMATCH_WINDOW_MS) continue;
+      distinct.add(e.billno);
+    }
+    return distinct.size === 1 ? [...distinct][0] : null;
+  }
+
   // Reconcile each TXN
   const txnResults = [];
   const dataQuality = [];
@@ -1587,17 +1629,39 @@ function reconcile(workbook) {
     const collCcy = (r.merchant_collection_ccy ?? r.collection_currency) || '';
     const createdDate = r.created_date || r.processing_date;
 
-    // Parking confirm match
-    const parkConfirm = parkConfirmIdx.get(confirmRef);
+    // Parking confirm / dispatch match on the references recorded in TXNDetails.
+    // Dispatch keys on the stable GME control key (ext_map_id_1 stripped), because the
+    // partner assigns a new ext_map_id_1 when a txn is (re-)dispatched. See remark below.
+    let confirmKey = confirmRef;
+    let dispKey = stripExtMap(dispatchRef);
+    const txnExtMap = lastSeg(dispatchRef);
+    let parkConfirm = parkConfirmIdx.get(confirmKey);
+    let parkDispatch = parkDispatchIdx.get(dispKey);
+
+    // Reference-key mismatch recovery: if either leg is absent under the recorded
+    // reference, the same payment may live under a different control number. Fill in
+    // only the missing side(s) by matching an unclaimed confirm leg on net amount +
+    // created-date, so a valid match on the other side is never overwritten.
+    let refMismatch = false;
+    let refMismatchRemark = '';
+    const primaryConfirmExists = !!parkConfirm && parkConfirm.length > 0;
+    const primaryDispatchExists = !!parkDispatch && parkDispatch.length > 0;
+    if (!primaryConfirmExists || !primaryDispatchExists) {
+      const recovered = recoverControlKey(netAmt, createdDate);
+      if (recovered) {
+        refMismatch = true;
+        consumedOrphans.add(recovered);
+        if (!primaryConfirmExists) { confirmKey = recovered; parkConfirm = parkConfirmIdx.get(recovered); }
+        if (!primaryDispatchExists) { dispKey = recovered; parkDispatch = parkDispatchIdx.get(recovered); }
+        refMismatchRemark = 'ref mismatch — legs found under control ' + recovered +
+          ' (TXN ref ' + (confirmRef || dispatchRef || '—') + '); matched by net amount + date';
+      }
+    }
+
     const parkConfirmExists = !!parkConfirm && parkConfirm.length > 0;
     const parkConfirmDate = parkConfirmExists ? parkConfirm[0].date : null;
     const confirmVoucherRef = parkConfirmExists ? (parkConfirm[0].raw && parkConfirm[0].raw.ref_num) : null;
 
-    // Parking dispatch match — on the stable GME control key (ext_map_id_1 stripped), because
-    // the partner assigns a new ext_map_id_1 when a txn is (re-)dispatched. See remark below.
-    const dispKey = stripExtMap(dispatchRef);
-    const txnExtMap = lastSeg(dispatchRef);
-    const parkDispatch = parkDispatchIdx.get(dispKey);
     const parkDispatchExists = !!parkDispatch && parkDispatch.length > 0;
     const parkDispatchDate = parkDispatchExists ? parkDispatch[0].date : null;
 
@@ -1653,6 +1717,12 @@ function reconcile(workbook) {
       status = 'Reconciled';
     }
 
+    // A recovered txn that otherwise balances is settled — but flag it so the ledger
+    // key discrepancy is surfaced for correction rather than hidden as clean.
+    if (refMismatch && status === 'Reconciled') {
+      status = 'Reconciled (ref mismatch)';
+    }
+
     seenStatuses[status] = (seenStatuses[status] || 0) + 1;
 
     txnResults.push({
@@ -1684,6 +1754,8 @@ function reconcile(workbook) {
       dispCount,
       dispDate,
       status,
+      refMismatch,
+      refMismatchRemark,
     });
   }
 
@@ -2221,6 +2293,7 @@ function reconcile(workbook) {
     total,
     reconciled,
     reconciledPct: total ? (reconciled / total) : 0,
+    refMismatch: seenStatuses['Reconciled (ref mismatch)'] || 0,
     confirmMissing: seenStatuses['Confirm missing'] || 0,
     dispatchMissing: seenStatuses['Dispatch missing'] || 0,
     bothMissing: seenStatuses['Both missing'] || 0,
@@ -2414,6 +2487,7 @@ function computeGuidelineChecks(ctx) {
 // ============================================================
 function statusPill(status) {
   if (status === 'Reconciled') return `<span class="pill good">${status}</span>`;
+  if (status === 'Reconciled (ref mismatch)') return `<span class="pill info">${status}</span>`;
   if (status === 'Amount mismatch' || status === 'Unbalanced') return `<span class="pill warn">${status}</span>`;
   return `<span class="pill bad">${status}</span>`;
 }
@@ -2431,7 +2505,7 @@ function renderKPIs(kpis) {
     <div class="kpi primary">
       <div class="kpi-label">Reconciled</div>
       <div class="kpi-value">${reconPct}<span class="kpi-value-suffix">%</span></div>
-      <div class="kpi-sub">${fmt(kpis.reconciled)} of ${fmt(kpis.total)} txns passed all four stages</div>
+      <div class="kpi-sub">${fmt(kpis.reconciled)} of ${fmt(kpis.total)} txns passed all four stages${kpis.refMismatch > 0 ? ' · <span class="pos">+' + fmt(kpis.refMismatch) + '</span> under a different control key (ref mismatch)' : ''}</div>
     </div>
     <div class="kpi">
       <div class="kpi-label">Exceptions</div>
@@ -2616,7 +2690,8 @@ function renderExceptions(rows) {
           const vouchers = [];
           vouchers.push('C: ' + (r.confirmVoucherRef ? escapeHtml(r.confirmVoucherRef) : '<span style="color:var(--bad)">missing</span>'));
           vouchers.push('D: ' + (r.dispVoucherRef ? escapeHtml(r.dispVoucherRef) : '<span style="color:var(--bad)">missing</span>'));
-          const remark = r.extMapRemark ? `<div style="font-size:11px;color:var(--warn);margin-top:4px;">${escapeHtml(r.extMapRemark)}</div>` : '';
+          const remarkText = [r.refMismatchRemark, r.extMapRemark].filter(Boolean).join(' · ');
+          const remark = remarkText ? `<div style="font-size:11px;color:var(--warn);margin-top:4px;">${escapeHtml(remarkText)}</div>` : '';
           return `
             <tr>
               <td class="mono">${escapeHtml(r.num)}</td>
@@ -2907,6 +2982,7 @@ function downloadReport() {
     ['KPI', 'Count', '%'],
     ['Total transactions', results.kpis.total, '100.0%'],
     ['Reconciled', results.kpis.reconciled, (results.kpis.reconciledPct * 100).toFixed(1) + '%'],
+    ['Reconciled (ref mismatch)', results.kpis.refMismatch, ((results.kpis.refMismatch / results.kpis.total) * 100).toFixed(1) + '%'],
     ['Confirm missing', results.kpis.confirmMissing, ((results.kpis.confirmMissing / results.kpis.total) * 100).toFixed(1) + '%'],
     ['Dispatch missing', results.kpis.dispatchMissing, ((results.kpis.dispatchMissing / results.kpis.total) * 100).toFixed(1) + '%'],
     ['Both missing', results.kpis.bothMissing, ((results.kpis.bothMissing / results.kpis.total) * 100).toFixed(1) + '%'],
@@ -2948,7 +3024,7 @@ function downloadReport() {
     r.dispSumDr, r.dispSumCr, r.dispNet,
     r.dispDate ? fmtDate(r.dispDate) : '',
     r.status,
-    r.extMapRemark || '',
+    [r.refMismatchRemark, r.extMapRemark].filter(Boolean).join(' · '),
   ])];
   const reconSheet = XLSX.utils.aoa_to_sheet(reconData);
   reconSheet['!cols'] = [{wch:6},{wch:18},{wch:30},{wch:26},{wch:38},{wch:14},{wch:8},{wch:14},
@@ -2988,7 +3064,7 @@ function downloadReport() {
         r.parkDispatchExists ? fmtDate(r.parkDispatchDate) : 'NOT FOUND',
         r.dispCount > 0 ? fmtDate(r.dispDate) : 'NOT FOUND',
         r.status,
-        r.extMapRemark || ''])
+        [r.refMismatchRemark, r.extMapRemark].filter(Boolean).join(' · ')])
     ];
     const excSheet = XLSX.utils.aoa_to_sheet(excData);
     excSheet['!cols'] = [{wch:6},{wch:18},{wch:30},{wch:26},{wch:38},{wch:14},{wch:22},{wch:22},{wch:18},{wch:18},{wch:18},{wch:22},{wch:52}];
