@@ -1010,6 +1010,76 @@
   @media (max-width: 640px) {
     .verify-ref { margin-left: 0; width: 100%; }
   }
+
+  /* ───────── Missing-voucher description (Exceptions tab) ───────── */
+  .exc-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .exc-toolbar .exc-selcount {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink-2);
+    font-family: 'Geist Mono', monospace;
+    white-space: nowrap;
+  }
+  .exc-toolbar .exc-hint {
+    font-size: 12.5px;
+    color: var(--ink-3);
+  }
+  .exc-desc-box {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+  }
+  .exc-desc-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--bg-muted);
+    border-bottom: 1px solid var(--line);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .exc-desc-head > div { display: flex; gap: 8px; }
+  .exc-desc-head button { padding: 5px 10px; font-size: 12px; }
+  .exc-desc-text {
+    width: 100%;
+    min-height: 120px;
+    max-height: 460px;
+    overflow: auto;
+    padding: 14px 16px;
+    font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: var(--ink-2);
+    background: var(--bg-card);
+    white-space: pre-wrap;
+    word-break: break-word;
+    outline: none;
+  }
+  .exc-desc-text strong { color: var(--ink); font-weight: 600; }
+  .exc-id {
+    display: inline-block;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-ring);
+    border-radius: var(--radius-sm);
+    padding: 1px 7px;
+    margin: 1px 0;
+  }
+  .exc-check { cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent); vertical-align: middle; }
+  th.exc-check-col, td.exc-check-col { width: 36px; text-align: center; padding-left: 12px; padding-right: 12px; }
 </style>
 </head>
 <body>
@@ -1241,6 +1311,20 @@
       </div>
 
       <div class="tab-panel" id="panel-exceptions">
+        <div class="exc-toolbar" id="excToolbar">
+          <button class="primary" onclick="generateMissingVoucherDescription()">Generate description</button>
+          <span class="exc-selcount" id="excSelCount">0 selected</span>
+          <span class="exc-hint">Tick the transactions below, then generate a short missing-voucher summary.</span>
+        </div>
+        <div class="exc-desc-box hidden" id="excDescBox">
+          <div class="exc-desc-head">
+            <span>Missing-voucher summary</span>
+            <div>
+              <button onclick="document.getElementById('excDescBox').classList.add('hidden')">Close</button>
+            </div>
+          </div>
+          <div id="excDescText" class="exc-desc-text"></div>
+        </div>
         <div class="table-wrap">
           <table id="excTable"></table>
         </div>
@@ -1623,11 +1707,17 @@ function reconcile(workbook) {
     const confirmRef = r['Confirm Reference'] == null ? '' : String(r['Confirm Reference']).trim();
     const dispatchRef = r['Dispatched Reference'] == null ? '' : String(r['Dispatched Reference']).trim();
     const merchant = r.merchant || '';
+    const merchantTxnId = r.merchant_txn_id;
+    const partnerTxnId = r.partner_txn_id;
+    const txnStatus = r.txn_status;
+    const merchantCollRate = r.merchant_coll_vs_sett_rate;
+    const partnerCollRate = r.partner_coll_vs_sett_rate;
     const collAmt = toNum(r.collection_amount);
     const sc = toNum(r.service_charge);
     const netAmt = collAmt - sc;
     const collCcy = (r.merchant_collection_ccy ?? r.collection_currency) || '';
     const createdDate = r.created_date || r.processing_date;
+    const processingDate = r.processing_date;
 
     // Parking confirm / dispatch match on the references recorded in TXNDetails.
     // Dispatch keys on the stable GME control key (ext_map_id_1 stripped), because the
@@ -1729,6 +1819,11 @@ function reconcile(workbook) {
       idx: i + 1,
       num: r['#'] ?? (i + 1),
       merchant,
+      merchantTxnId,
+      partnerTxnId,
+      txnStatus,
+      merchantCollRate,
+      partnerCollRate,
       confirmRef,
       dispatchRef,
       collAmt,
@@ -1736,6 +1831,7 @@ function reconcile(workbook) {
       netAmt,
       collCcy,
       createdDate,
+      processingDate,
       parkConfirmExists,
       parkConfirmDate,
       confirmVoucherRef,
@@ -2313,6 +2409,13 @@ function reconcile(workbook) {
     txnRows, depRows, parkRows, dispRows, txnResults, merchantSummary, dataQuality: dqList,
   });
 
+  // Late-posting window: txns created within LAG_DAYS of the most recent txn in the
+  // extract may simply not have had their voucher legs posted yet — a likely (not
+  // confirmed) reason for a "missing" leg. Same window the Verify tab uses.
+  const LATE_LAG_DAYS = 3;
+  const createdTimesAll = txnRows.map(r => parseToDate(r.created_date)).filter(Boolean).map(d => d.getTime());
+  const lateWindowCutMs = createdTimesAll.length ? Math.max(...createdTimesAll) - LATE_LAG_DAYS * 86400 * 1000 : null;
+
   return {
     kpis,
     merchantSummary,
@@ -2320,6 +2423,8 @@ function reconcile(workbook) {
     depositMatches,
     dataQuality: dqList,
     guidelineChecks,
+    lateWindowCutMs,
+    lagDays: LATE_LAG_DAYS,
     timestamp: new Date(),
   };
 }
@@ -2662,13 +2767,14 @@ function renderExceptions(rows) {
   const exceptions = rows.filter(r => r.status !== 'Reconciled');
   const table = document.getElementById('excTable');
   if (exceptions.length === 0) {
-    table.innerHTML = `<tbody><tr><td colspan="9" style="text-align: center; padding: 48px; color: var(--ink-3);">
+    table.innerHTML = `<tbody><tr><td colspan="10" style="text-align: center; padding: 48px; color: var(--ink-3);">
       <strong style="display:block; font-size: 16px; color: var(--good); margin-bottom: 6px;">✓ Nothing to flag</strong>
       Every transaction reconciles cleanly across all four stages.
     </td></tr></tbody>`;
   } else {
     table.innerHTML = `
       <thead><tr>
+        <th class="exc-check-col"><input type="checkbox" class="exc-check" id="excCheckAll" onclick="toggleAllExc(this)" title="Select all"></th>
         <th>#</th>
         <th>TXN created</th>
         <th>Merchant</th>
@@ -2680,7 +2786,7 @@ function renderExceptions(rows) {
         <th>Issue</th>
       </tr></thead>
       <tbody>
-        ${exceptions.map(r => {
+        ${exceptions.map((r, i) => {
           // Show what stages WERE found (with dates) — helps user verify and locate
           const found = [];
           if (r.parkConfirmExists) found.push(`<span style="color:var(--good)">Confirm</span> ${fmtDate(r.parkConfirmDate)}`);
@@ -2694,6 +2800,7 @@ function renderExceptions(rows) {
           const remark = remarkText ? `<div style="font-size:11px;color:var(--warn);margin-top:4px;">${escapeHtml(remarkText)}</div>` : '';
           return `
             <tr>
+              <td class="exc-check-col"><input type="checkbox" class="exc-check exc-row-check" data-exc="${i}"></td>
               <td class="mono">${escapeHtml(r.num)}</td>
               <td class="date-cell">${fmtDate(r.createdDate)}</td>
               <td>${escapeHtml(r.merchant)}</td>
@@ -2710,6 +2817,146 @@ function renderExceptions(rows) {
     `;
   }
   document.getElementById('excCount').textContent = exceptions.length;
+  // Fresh render → nothing selected, hide any prior summary
+  document.getElementById('excDescBox').classList.add('hidden');
+  updateExcSelCount();
+}
+
+// ── Missing-voucher description (Exceptions tab) ──────────────────────────
+// Which voucher legs are absent for this exception row, in plain words.
+function excMissingParts(r) {
+  const parts = [];
+  if (!r.parkConfirmExists) parts.push('Confirm voucher');
+  if (!r.parkDispatchExists) parts.push('Dispatch voucher');
+  if (r.parkDispatchExists && r.dispCount === 0) parts.push('Dispatched legs');
+  return parts;
+}
+
+// One-line issue phrase per transaction.
+function excIssueText(r) {
+  const missing = excMissingParts(r);
+  if (missing.length) return missing.join(' + ') + ' missing';
+  if (r.status === 'Unbalanced') return 'Dispatched legs unbalanced (net ' + fmt(r.dispNet, 2) + ')';
+  if (r.status === 'Amount mismatch') return 'Amount mismatch (Δ ' + fmt(r.amtVariance) + ' KRW)';
+  return r.status;
+}
+
+// Likely reason a voucher/leg is missing, inferred from the data. The app can't know
+// the true business cause — it reports the most probable one from timing, txn_status,
+// and reference-key signals.
+function excMissingReason(r) {
+  const missing = excMissingParts(r);
+  if (!missing.length) {
+    if (r.status === 'Unbalanced') return 'Dispatched debits and credits do not net to zero — check the partner-side legs.';
+    if (r.status === 'Amount mismatch') return 'Parking confirm amount differs from the transaction net amount.';
+    if (r.refMismatch && r.refMismatchRemark) return r.refMismatchRemark;
+    return 'Present but does not reconcile — review the detail columns.';
+  }
+  if (String(r.txnStatus || '').toUpperCase() === 'PROCESSING') {
+    return 'Transaction still in Processing — voucher not generated yet (clear with engineering).';
+  }
+  if (isMissing(r.merchantCollRate) && isMissing(r.partnerCollRate)) {
+    return 'Collection-vs-settlement FX rate is NULL (merchant/partner coll_vs_sett_rate not set) — the payment likely could not be confirmed or dispatched until the rate is resolved.';
+  }
+  const cut = state.results && state.results.lateWindowCutMs;
+  const d = parseToDate(r.createdDate);
+  if (cut && d && d.getTime() >= cut) {
+    return 'Created within ' + (state.results.lagDays || 3) + ' days of the extract — leg likely still posting, not a confirmed break.';
+  }
+  if (r.refMismatch) {
+    return 'Recorded reference differs from the ledger control key — legs may exist under a different number.';
+  }
+  return 'No matching leg in the parking ledger for the recorded reference — genuine break, investigate at source.';
+}
+
+function updateExcSelCount() {
+  const n = document.querySelectorAll('#excTable .exc-row-check:checked').length;
+  const el = document.getElementById('excSelCount');
+  if (el) el.textContent = n + ' selected';
+  const all = document.getElementById('excCheckAll');
+  const total = document.querySelectorAll('#excTable .exc-row-check').length;
+  if (all) {
+    all.checked = total > 0 && n === total;
+    all.indeterminate = n > 0 && n < total;
+  }
+}
+
+function toggleAllExc(master) {
+  document.querySelectorAll('#excTable .exc-row-check').forEach(cb => { cb.checked = master.checked; });
+  updateExcSelCount();
+}
+
+function generateMissingVoucherDescription() {
+  if (!state.results) return;
+  const exceptions = state.results.txnResults.filter(r => r.status !== 'Reconciled');
+  const checked = Array.from(document.querySelectorAll('#excTable .exc-row-check:checked'))
+    .map(cb => exceptions[parseInt(cb.dataset.exc, 10)])
+    .filter(Boolean);
+
+  const box = document.getElementById('excDescBox');
+  const ta = document.getElementById('excDescText');
+  box.classList.remove('hidden');
+
+  if (checked.length === 0) {
+    ta.innerHTML = 'No transactions selected.\nTick the checkbox next to one or more rows, then click "Generate description".';
+    return;
+  }
+
+  // Group selected txns by merchant
+  const byMerch = new Map();
+  for (const r of checked) {
+    const m = r.merchant || 'Unknown merchant';
+    if (!byMerch.has(m)) byMerch.set(m, []);
+    byMerch.get(m).push(r);
+  }
+
+  // Headline tally of what's missing
+  let cMiss = 0, dMiss = 0, dlMiss = 0, other = 0;
+  for (const r of checked) {
+    const parts = excMissingParts(r);
+    if (parts.includes('Confirm voucher')) cMiss++;
+    if (parts.includes('Dispatch voucher')) dMiss++;
+    if (parts.includes('Dispatched legs')) dlMiss++;
+    if (parts.length === 0) other++;
+  }
+  const tally = [];
+  if (cMiss) tally.push(cMiss + ' confirm');
+  if (dMiss) tally.push(dMiss + ' dispatch');
+  if (dlMiss) tally.push(dlMiss + ' dispatched-leg');
+  if (other) tally.push(other + ' other issue' + (other === 1 ? '' : 's'));
+
+  const esc = escapeHtml;
+  const lines = [];
+  lines.push('<strong>MISSING VOUCHER REPORT</strong>');
+  lines.push('Selected: ' + checked.length + ' transaction(s) across ' + byMerch.size + ' merchant(s)'
+    + (tally.length ? ' — ' + tally.join(', ') + (cMiss || dMiss || dlMiss ? ' missing' : '') : ''));
+  lines.push('');
+
+  for (const [merchant, rows] of byMerch) {
+    const ccy = rows[0].collCcy || '';
+    lines.push('<strong>' + esc(merchant) + (ccy ? ' (' + esc(ccy) + ')' : '') + '</strong> — ' + rows.length + ' txn(s)');
+    for (const r of rows) {
+      // Highlighted transaction IDs on top
+      const idBits = [];
+      if (!isMissing(r.merchantTxnId)) idBits.push('<span class="exc-id">merchant_txn_id ' + esc(String(r.merchantTxnId).trim().replace(/,/g, '')) + '</span>');
+      if (!isMissing(r.partnerTxnId)) idBits.push('<span class="exc-id">partner_txn_id ' + esc(String(r.partnerTxnId).trim().replace(/,/g, '')) + '</span>');
+      lines.push('  ' + (idBits.length ? idBits.join('  ') : '(no transaction id)'));
+      // Issue + amount
+      lines.push('      ' + esc(excIssueText(r)) + ' | Net ' + esc(fmt(r.netAmt)) + (ccy ? ' ' + esc(ccy) : ''));
+      // References
+      const refBits = [];
+      if (r.confirmRef) refBits.push('Confirm ref ' + esc(r.confirmRef));
+      if (r.dispatchRef) refBits.push('Dispatched ref ' + esc(r.dispatchRef));
+      if (refBits.length) lines.push('      ' + refBits.join(' | '));
+      // Dates
+      lines.push('      created_date ' + esc(fmtDate(r.createdDate)) + ' | processing_date ' + esc(fmtDate(r.processingDate)));
+      // Likely reason it's missing
+      lines.push('      Likely reason: ' + esc(excMissingReason(r)));
+    }
+    lines.push('');
+  }
+
+  ta.innerHTML = lines.join('\n').replace(/\n+$/, '');
 }
 
 function renderDeposits(deposits) {
@@ -2960,6 +3207,7 @@ function resetUI() {
   document.getElementById('fileInput').value = '';
   document.getElementById('newFileBtn').classList.add('hidden');
   document.getElementById('downloadBtn').classList.add('hidden');
+  document.getElementById('excDescBox').classList.add('hidden');
   showView('uploadView');
 }
 
@@ -3171,6 +3419,11 @@ document.getElementById('reconSearch').addEventListener('input', () => {
 });
 document.getElementById('reconStatusFilter').addEventListener('change', () => {
   if (state.results) renderReconTable(state.results.txnResults);
+});
+
+// Exceptions row-selection (delegated — #excTable persists across re-renders)
+document.getElementById('excTable').addEventListener('change', (e) => {
+  if (e.target.classList.contains('exc-row-check')) updateExcSelCount();
 });
 
 // Deposit filters
