@@ -1280,6 +1280,7 @@
       <div class="tabs">
         <button class="tab active" data-tab="verify">Verify <span class="count" id="verifyCount">0</span></button>
         <button class="tab" data-tab="recon">Reconciliation <span class="count" id="reconCount">0</span></button>
+        <button class="tab" data-tab="partner">By partner <span class="count" id="partnerCount">0</span></button>
         <button class="tab" data-tab="exceptions">Exceptions <span class="count" id="excCount">0</span></button>
         <button class="tab" data-tab="deposits">Unmatched deposits <span class="count" id="depCount">0</span></button>
         <button class="tab" data-tab="dq">Data quality <span class="count" id="dqCount">0</span></button>
@@ -1307,6 +1308,12 @@
         </div>
         <div class="table-wrap">
           <table id="reconTable"></table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-partner">
+        <div class="table-wrap">
+          <table class="summary-table" id="partnerTable"></table>
         </div>
       </div>
 
@@ -1709,6 +1716,8 @@ function reconcile(workbook) {
     const merchant = r.merchant || '';
     const merchantTxnId = r.merchant_txn_id;
     const partnerTxnId = r.partner_txn_id;
+    const partner = r.partner || 'Unknown';
+    const partnerCcy = (r.partner_settlement_ccy ?? '') || '';
     const txnStatus = r.txn_status;
     const merchantCollRate = r.merchant_coll_vs_sett_rate;
     const partnerCollRate = r.partner_coll_vs_sett_rate;
@@ -1821,6 +1830,8 @@ function reconcile(workbook) {
       merchant,
       merchantTxnId,
       partnerTxnId,
+      partner,
+      partnerCcy,
       txnStatus,
       merchantCollRate,
       partnerCollRate,
@@ -2376,6 +2387,32 @@ function reconcile(workbook) {
     };
   }).sort((a, b) => b.gross - a.gross);
 
+  // Partner-wise transaction summary (grouped by the `partner` column).
+  // Reconciled/Exceptions use the same definition as the KPI hero:
+  // reconciled = status 'Reconciled', everything else counts as an exception.
+  const partnerAgg = new Map();
+  for (const r of txnResults) {
+    const p = r.partner || 'Unknown';
+    if (!partnerAgg.has(p)) partnerAgg.set(p, { txnCount: 0, gross: 0, net: 0, reconciled: 0, missingVoucher: 0, ccys: new Set() });
+    const a = partnerAgg.get(p);
+    a.txnCount++;
+    a.gross += r.collAmt;
+    a.net += r.netAmt;
+    if (r.status === 'Reconciled') a.reconciled++;
+    if (r.status === 'Both missing' || r.status === 'Confirm missing' || r.status === 'Dispatch missing') a.missingVoucher++;
+    if (r.partnerCcy) a.ccys.add(r.partnerCcy);
+  }
+  const partnerSummary = [...partnerAgg.entries()].map(([partner, a]) => ({
+    partner,
+    currencies: [...a.ccys].join(', '),
+    txnCount: a.txnCount,
+    gross: a.gross,
+    net: a.net,
+    reconciled: a.reconciled,
+    exceptions: a.txnCount - a.reconciled,
+    missingVoucher: a.missingVoucher,
+  })).sort((a, b) => b.txnCount - a.txnCount);
+
   // KPIs
   const total = txnResults.length;
   const reconciled = seenStatuses['Reconciled'] || 0;
@@ -2419,6 +2456,7 @@ function reconcile(workbook) {
   return {
     kpis,
     merchantSummary,
+    partnerSummary,
     txnResults,
     depositMatches,
     dataQuality: dqList,
@@ -2707,6 +2745,59 @@ function renderMerchantSummary(summary) {
     </tfoot>
   `;
   document.getElementById('depositMeta').textContent = `${summary.length} merchants · ${fmt(totalRow.count)} txns · ${fmt(totalRow.depCount)} deposit entries`;
+}
+
+function renderPartnerSummary(summary) {
+  const table = document.getElementById('partnerTable');
+  const totals = summary.reduce((acc, r) => ({
+    txnCount: acc.txnCount + r.txnCount,
+    gross: acc.gross + r.gross,
+    net: acc.net + r.net,
+    reconciled: acc.reconciled + r.reconciled,
+    exceptions: acc.exceptions + r.exceptions,
+    missingVoucher: acc.missingVoucher + r.missingVoucher,
+  }), { txnCount: 0, gross: 0, net: 0, reconciled: 0, exceptions: 0, missingVoucher: 0 });
+
+  table.innerHTML = `
+    <thead><tr>
+      <th>Partner</th>
+      <th>Settlement ccy</th>
+      <th class="num">Txns</th>
+      <th class="num">Gross collection</th>
+      <th class="num">Net</th>
+      <th class="num">Reconciled</th>
+      <th class="num">Exceptions</th>
+      <th class="num">Missing voucher</th>
+    </tr></thead>
+    <tbody>
+      ${summary.map(r => `
+        <tr>
+          <td>${escapeHtml(r.partner)}</td>
+          <td class="mono" style="font-size: 12px; color: var(--ink-3);">${escapeHtml(r.currencies)}</td>
+          <td class="num mono">${fmt(r.txnCount)}</td>
+          <td class="num mono">${fmt(r.gross)}</td>
+          <td class="num mono">${fmt(r.net)}</td>
+          <td class="num mono" style="color: var(--good)">${fmt(r.reconciled)}</td>
+          <td class="num mono" style="color: ${r.exceptions > 0 ? 'var(--warn)' : 'var(--ink-3)'}">${fmt(r.exceptions)}</td>
+          <td class="num mono" style="color: ${r.missingVoucher > 0 ? 'var(--bad)' : 'var(--ink-3)'}">${fmt(r.missingVoucher)}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td>Total</td>
+        <td></td>
+        <td class="num mono">${fmt(totals.txnCount)}</td>
+        <td class="num mono">${fmt(totals.gross)}</td>
+        <td class="num mono">${fmt(totals.net)}</td>
+        <td class="num mono">${fmt(totals.reconciled)}</td>
+        <td class="num mono">${fmt(totals.exceptions)}</td>
+        <td class="num mono">${fmt(totals.missingVoucher)}</td>
+      </tr>
+    </tfoot>
+  `;
+  const badge = document.getElementById('partnerCount');
+  if (badge) badge.textContent = summary.length;
 }
 
 function renderReconTable(rows) {
@@ -3185,6 +3276,7 @@ function renderReport(results) {
   renderKPIs(results.kpis);
   renderVerify(results.guidelineChecks);
   renderMerchantSummary(results.merchantSummary);
+  renderPartnerSummary(results.partnerSummary);
   renderReconTable(results.txnResults);
   renderExceptions(results.txnResults);
   renderDeposits(results.depositMatches);
