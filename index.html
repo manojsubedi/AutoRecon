@@ -735,6 +735,7 @@
     letter-spacing: 0.005em;
   }
   th.num { text-align: right; }
+  th.th-help { cursor: help; text-decoration: underline dotted var(--ink-4); text-underline-offset: 3px; }
   td {
     padding: 11px 16px;
     border-bottom: 1px solid var(--line);
@@ -2760,14 +2761,14 @@ function renderPartnerSummary(summary) {
 
   table.innerHTML = `
     <thead><tr>
-      <th>Partner</th>
-      <th>Settlement ccy</th>
-      <th class="num">Txns</th>
-      <th class="num">Gross collection</th>
-      <th class="num">Net</th>
-      <th class="num">Reconciled</th>
-      <th class="num">Exceptions</th>
-      <th class="num">Missing voucher</th>
+      <th class="th-help" title="Value of the &quot;partner&quot; column in TXNDetails — the downstream payout partner the transaction was routed to.">Partner</th>
+      <th class="th-help" title="Distinct partner_settlement_ccy values seen across this partner's transactions.">Settlement ccy</th>
+      <th class="num th-help" title="Number of transactions routed to this partner.">Txns</th>
+      <th class="num th-help" title="Sum of collection_amount (raw amount collected from the merchant). Commas/[NULL] cleaned to numbers. No FX conversion — summed in raw units, so mixed-currency partners show a raw total.">Gross collection</th>
+      <th class="num th-help" title="Sum of (collection_amount − service_charge). Gross minus GME's service charge. Gross − Net = total service charge for this partner.">Net</th>
+      <th class="num th-help" title="Transactions with status exactly &quot;Reconciled&quot; — passed all stages (confirm, dispatch, balanced). Same rule as the Reconciled KPI.">Reconciled</th>
+      <th class="num th-help" title="Transactions not fully reconciled — everything except status &quot;Reconciled&quot; (includes ref-mismatch, unbalanced, amount mismatch, and missing vouchers).">Exceptions</th>
+      <th class="num th-help" title="Transactions missing a confirm and/or dispatch voucher leg (status Both / Confirm / Dispatch missing). Subset of Exceptions.">Missing voucher</th>
     </tr></thead>
     <tbody>
       ${summary.map(r => `
