@@ -483,6 +483,50 @@
     text-align: right;
   }
 
+  /* ───────── Top-level mode nav ───────── */
+  .mode-nav {
+    display: flex;
+    gap: 4px;
+    padding: 5px;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin: 24px 0 8px;
+    width: fit-content;
+  }
+  .mode-btn {
+    background: none;
+    border: none;
+    padding: 9px 18px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-3);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    letter-spacing: -0.005em;
+  }
+  .mode-btn:hover { color: var(--ink); }
+  .mode-btn.active {
+    background: var(--bg-card);
+    color: var(--ink);
+    box-shadow: var(--shadow-sm);
+  }
+  .mode-btn .mode-btn-tag {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--neutral-bg);
+    color: var(--ink-3);
+  }
+  .mode-btn.active .mode-btn-tag { background: var(--accent-soft); color: var(--accent); }
+
   /* ───────── Tabs ───────── */
   .tabs {
     display: flex;
@@ -735,6 +779,8 @@
     letter-spacing: 0.005em;
   }
   th.num { text-align: right; }
+  td.num { text-align: right; }
+  td.mono { font-family: 'Geist Mono', monospace; }
   th.th-help { cursor: help; text-decoration: underline dotted var(--ink-4); text-underline-offset: 3px; }
   td {
     padding: 11px 16px;
@@ -1106,6 +1152,14 @@
 </header>
 
 <main>
+  <!-- Top-level mode switch -->
+  <nav class="mode-nav" id="modeNav">
+    <button class="mode-btn active" data-mode="recon" onclick="switchMode('recon')">Reconciliation</button>
+    <button class="mode-btn" data-mode="bok" onclick="switchMode('bok')">BOK Verification <span class="mode-btn-tag">FX1014</span></button>
+  </nav>
+
+  <!-- ═══════════════ MODE: Reconciliation ═══════════════ -->
+  <div id="reconMode">
   <!-- Upload view -->
   <div id="uploadView">
     <div class="upload-hero">
@@ -1374,6 +1428,113 @@
     </div>
     <button onclick="resetUI()">Try another file</button>
   </div>
+  </div><!-- /#reconMode -->
+
+  <!-- ═══════════════ MODE: BOK Verification (FX1014) ═══════════════ -->
+  <div id="bokMode" class="hidden">
+
+    <!-- BOK upload view -->
+    <div id="bokUploadView">
+      <div class="upload-hero">
+        <div class="upload-hero-text">
+          <div class="byline">BOK FX1014 · <span>USD conversion check</span></div>
+          <h1>Verify<em>before you submit.</em></h1>
+          <p class="lede">Upload a <strong>BOK FX1014</strong> per-transaction report (<code>bok-report.xlsx</code>) and this re-runs the Bank&nbsp;of&nbsp;Korea USD-conversion checks locally — the same rules that produced the <strong>28 J-errors + 5 T-errors</strong> on the 2026-06-30 filing. It flags every row BOK would reject <strong>before</strong> you send the file.</p>
+          <div class="upload-notes">
+            <h4>What it checks</h4>
+            <ul>
+              <li><strong>Column J</strong> (송금USD환산금액) must equal <code>H ÷ I</code> = PAYOUT AMOUNT ÷ USD V LCY RATE — positive, rejected when &gt; <strong>20%</strong> off.</li>
+              <li><strong>Column T</strong> (송금의뢰USD환산금액) must equal <code>R ÷ S</code> = COLLECTION AMOUNT ÷ USD V COLLECTION RATE — positive, rejected when &gt; <strong>25%</strong> off.</li>
+              <li>Rate = 0 rows (I or S = 0) are flagged as open items — formula undefined, needs a manual fix.</li>
+              <li>Data starts at <strong>row 3</strong> (row 1 = English headers, row 2 = Korean headers). Nothing is uploaded — all processing runs in your browser.</li>
+            </ul>
+          </div>
+        </div>
+        <label class="dropzone" id="bokDropzone">
+          <input type="file" id="bokFileInput" accept=".xlsx,.xls,.xlsm">
+          <div class="dropzone-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="12" y1="18" x2="12" y2="12"/>
+              <polyline points="9 15 12 12 15 15"/>
+            </svg>
+          </div>
+          <h3>Drop the BOK report .xlsx here</h3>
+          <p>or <strong>click to browse</strong></p>
+        </label>
+      </div>
+    </div>
+
+    <!-- BOK loading view -->
+    <div id="bokLoadingView" class="hidden">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p id="bokLoadingMsg">Reading workbook…</p>
+      </div>
+    </div>
+
+    <!-- BOK report view -->
+    <div id="bokReportView" class="hidden">
+      <div class="dateline">
+        <div class="left">
+          <strong id="bokReportFilename">bok-report.xlsx</strong>
+        </div>
+        <div class="right" id="bokReportSubtitle"></div>
+      </div>
+
+      <div class="kpi-hero" id="bokKpiGrid"></div>
+
+      <section>
+        <div class="section-head">
+          <h2>USD conversion errors <em>FX1014</em></h2>
+          <span class="section-meta" id="bokVerdict"></span>
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="bokj">Column J errors <span class="count" id="bokJCount">0</span></button>
+          <button class="tab" data-tab="bokt">Column T errors <span class="count" id="bokTCount">0</span></button>
+          <button class="tab" data-tab="bokrate0">Rate = 0 <span class="count" id="bokRate0Count">0</span></button>
+          <button class="tab" data-tab="bokwatch">Watch list <span class="count" id="bokWatchCount">0</span></button>
+        </div>
+
+        <div class="tab-panel active" id="panel-bokj">
+          <p class="flow-intro" style="margin-bottom:14px;">Column&nbsp;J (송금USD환산금액) must equal <code>PAYOUT AMOUNT ÷ USD V LCY RATE</code>, positive and rounded to 2 decimals. BOK rejects any row deviating more than <strong>20%</strong> from that value, or any negative value.</p>
+          <div class="table-wrap"><table id="bokJTable"></table></div>
+        </div>
+
+        <div class="tab-panel" id="panel-bokt">
+          <p class="flow-intro" style="margin-bottom:14px;">Column&nbsp;T (송금의뢰USD환산금액) must equal <code>COLLECTION AMOUNT ÷ USD V COLLECTION RATE</code>, positive and rounded to 2 decimals. Tolerance is looser than J — rejected around <strong>25%</strong> off.</p>
+          <div class="table-wrap"><table id="bokTTable"></table></div>
+        </div>
+
+        <div class="tab-panel" id="panel-bokrate0">
+          <p class="flow-intro" style="margin-bottom:14px;">Rate = 0 (USD V LCY RATE <code>I</code> = 0, or USD V COLLECTION RATE <code>S</code> = 0) makes the formula undefined. These are <strong>open items</strong> — enter a real rate or use the opposite-side value. Do <strong>not</strong> invent a value.</p>
+          <div class="table-wrap"><table id="bokRate0Table"></table></div>
+        </div>
+
+        <div class="tab-panel" id="panel-bokwatch">
+          <p class="flow-intro" style="margin-bottom:14px;">Within tolerance now (accepted) but more than <strong>2%</strong> off the exact formula — systematic drift that could tip over the rejection line next cycle. Worth watching, no action required.</p>
+          <div class="table-wrap"><table id="bokWatchTable"></table></div>
+        </div>
+      </section>
+
+      <div class="header-actions" style="display:flex;gap:8px;margin-top:8px;">
+        <button onclick="bokResetUI()">Check another file</button>
+        <button class="primary" onclick="downloadBokReport()">Download error report</button>
+      </div>
+    </div>
+
+    <!-- BOK error view -->
+    <div id="bokErrorView" class="hidden">
+      <div class="error-box">
+        <strong>Couldn't process the file</strong>
+        <span id="bokErrorMsg"></span>
+      </div>
+      <button onclick="bokResetUI()">Try another file</button>
+    </div>
+
+  </div><!-- /#bokMode -->
 </main>
 
 <footer>
@@ -3447,6 +3608,301 @@ function downloadReport() {
 }
 
 // ============================================================
+// BOK FX1014 — USD conversion verification
+// Port of validate_fx1014.py. Rules (see VALIDATION_RULES.md):
+//   Data starts at row 3 (rows 1-2 are headers).
+//   J (송금USD환산금액)   = H / I   (PAYOUT AMOUNT / USD V LCY RATE)          -- POSITIVE, 2 dp
+//   T (송금의뢰USD환산금액) = R / S   (COLLECTION AMOUNT / USD V COLLECTION RATE) -- POSITIVE, 2 dp
+//   BOK tolerance: J rejected > ~20% off ; T looser (~25%). Sign must be POSITIVE.
+//   Rate = 0 (I or S = 0) -> formula undefined, flag as an open item.
+// ============================================================
+const BOK_J_TOL = 0.20;   // column J deviation that BOK rejects
+const BOK_T_TOL = 0.25;   // column T tolerance is looser than J
+// Column letters -> 0-based index for header:1 arrays
+const BOK_COL = { E: 4, G: 6, H: 7, I: 8, J: 9, R: 17, S: 18, T: 19 };
+
+let bokState = { filename: '', workbook: null, results: null };
+
+function bokNum(x) {
+  if (x === null || x === undefined) return null;
+  const s = String(x).replace(/,/g, '').trim();
+  if (s === '') return null;
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
+function bokFmt(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+function validateBok(workbook) {
+  const sheetName = workbook.SheetNames[0];
+  const ws = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+
+  const jErr = [], tErr = [], rate0 = [], jSoft = [];
+  let total = 0;
+
+  // Data starts at row 3 -> array index 2
+  for (let i = 2; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const biz = row[BOK_COL.E];
+    if (biz === null || biz === undefined || String(biz).trim() === '') continue;
+    total++;
+    const cur = row[BOK_COL.G] == null ? '' : String(row[BOK_COL.G]).trim();
+    const H = bokNum(row[BOK_COL.H]), I = bokNum(row[BOK_COL.I]), J = bokNum(row[BOK_COL.J]);
+    const R = bokNum(row[BOK_COL.R]), S = bokNum(row[BOK_COL.S]), T = bokNum(row[BOK_COL.T]);
+    const excelRow = i + 1;
+
+    // Column J = H / I
+    if (I === 0 || I === null) {
+      rate0.push({ row: excelRow, biz, cur, why: 'J: USD V LCY RATE (I) = 0 → H÷I undefined' });
+    } else if (H !== null && J !== null) {
+      const correct = Math.round((H / I) * 100) / 100;
+      const dev = Math.abs(J / (H / I) - 1);
+      if (J < 0) jErr.push({ row: excelRow, biz, cur, entered: J, correct, why: 'NEGATIVE sign' });
+      else if (dev > BOK_J_TOL) jErr.push({ row: excelRow, biz, cur, entered: J, correct, why: (dev * 100).toFixed(1) + '% off' });
+      else if (dev > 0.02) jSoft.push({ row: excelRow, biz, cur, entered: J, correct, why: (dev * 100).toFixed(1) + '% off (within tol)' });
+    }
+
+    // Column T = R / S
+    if (S === 0 || S === null) {
+      rate0.push({ row: excelRow, biz, cur, why: 'T: USD V COLLECTION RATE (S) = 0 → R÷S undefined' });
+    } else if (R !== null && T !== null) {
+      const correct = Math.round((R / S) * 100) / 100;
+      const dev = Math.abs(T / (R / S) - 1);
+      if (T < 0) tErr.push({ row: excelRow, biz, cur, entered: T, correct, why: 'NEGATIVE sign' });
+      else if (dev > BOK_T_TOL) tErr.push({ row: excelRow, biz, cur, entered: T, correct, why: (dev * 100).toFixed(1) + '% off' });
+    }
+  }
+
+  return { sheetName, total, jErr, tErr, rate0, jSoft, timestamp: new Date() };
+}
+
+// ── BOK rendering ──────────────────────────────────────────
+function renderBokReport(res) {
+  document.getElementById('bokReportFilename').textContent = bokState.filename + ' · ' + res.sheetName;
+  document.getElementById('bokReportSubtitle').textContent =
+    `${fmt(res.total)} records · ${res.timestamp.toLocaleString()}`;
+
+  const errRows = new Set();
+  res.jErr.forEach(e => errRows.add(e.row));
+  res.tErr.forEach(e => errRows.add(e.row));
+  res.rate0.forEach(e => errRows.add(e.row));
+  const rejects = errRows.size;
+  const valid = res.total - rejects;
+
+  // Verdict pill
+  const verdict = document.getElementById('bokVerdict');
+  verdict.innerHTML = rejects === 0
+    ? '<span class="pill good">PASS · no USD-conversion errors</span>'
+    : `<span class="pill bad">${rejects} row${rejects === 1 ? '' : 's'} BOK would flag</span>`;
+
+  // KPIs
+  const kpi = (label, marker, value, sub, opts) => {
+    opts = opts || {};
+    const valColor = opts.bad && value > 0 ? ' style="color:var(--bad);"' : (opts.good ? ' style="color:var(--good);"' : '');
+    return `<div class="kpi${opts.primary ? ' primary' : ''}">
+      <div class="kpi-label"><span class="marker">${marker}</span> ${label}</div>
+      <div class="kpi-value"${valColor}>${value}</div>
+      ${sub ? `<div class="kpi-sub">${sub}</div>` : ''}
+    </div>`;
+  };
+  document.getElementById('bokKpiGrid').innerHTML =
+    kpi('Records checked', '01', fmt(res.total),
+        `<span class="pos">${fmt(valid)} valid</span> · <span class="${rejects ? 'neg' : ''}">${fmt(rejects)} with errors</span>`,
+        { primary: true }) +
+    kpi('Column J errors', 'J', fmt(res.jErr.length), '송금USD환산금액 = H÷I', { bad: true }) +
+    kpi('Column T errors', 'T', fmt(res.tErr.length), '송금의뢰USD환산금액 = R÷S', { bad: true }) +
+    kpi('Rate = 0 · open items', '!', fmt(res.rate0.length), 'formula undefined — needs manual fix', { bad: true });
+
+  // Tab counts
+  document.getElementById('bokJCount').textContent = res.jErr.length;
+  document.getElementById('bokTCount').textContent = res.tErr.length;
+  document.getElementById('bokRate0Count').textContent = res.rate0.length;
+  document.getElementById('bokWatchCount').textContent = res.jSoft.length;
+
+  // Tables
+  document.getElementById('bokJTable').innerHTML = bokErrTableHTML(res.jErr, 'Column J');
+  document.getElementById('bokTTable').innerHTML = bokErrTableHTML(res.tErr, 'Column T');
+  document.getElementById('bokRate0Table').innerHTML = bokRate0TableHTML(res.rate0);
+  document.getElementById('bokWatchTable').innerHTML = bokWatchTableHTML(res.jSoft);
+}
+
+function bokNoneRow(cols, msg) {
+  return `<tbody><tr><td colspan="${cols}" style="color:var(--good);padding:22px 16px;font-size:13px;">✓ ${msg}</td></tr></tbody>`;
+}
+
+function bokErrTableHTML(rows, label) {
+  const head = `<thead><tr><th>Excel Row</th><th>Transaction No</th><th>Cur</th><th class="num">Entered (in file)</th><th class="num">Correct value</th><th>Reason BOK rejects</th></tr></thead>`;
+  if (!rows.length) return head + bokNoneRow(6, `None — every row passes the ${label} check.`);
+  let body = '<tbody>';
+  for (const e of rows) {
+    body += `<tr>`
+      + `<td class="mono">${e.row}</td>`
+      + `<td class="mono">${escapeHtml(e.biz)}</td>`
+      + `<td>${escapeHtml(e.cur)}</td>`
+      + `<td class="num mono" style="color:var(--bad);">${bokFmt(e.entered)}</td>`
+      + `<td class="num mono" style="color:var(--good);">${e.correct == null ? '—' : bokFmt(e.correct)}</td>`
+      + `<td><span class="pill bad">${escapeHtml(e.why)}</span></td>`
+      + `</tr>`;
+  }
+  return head + body + '</tbody>';
+}
+
+function bokRate0TableHTML(rows) {
+  const head = `<thead><tr><th>Excel Row</th><th>Transaction No</th><th>Cur</th><th>Open item</th></tr></thead>`;
+  if (!rows.length) return head + bokNoneRow(4, 'None — no zero rates.');
+  let body = '<tbody>';
+  for (const e of rows) {
+    body += `<tr>`
+      + `<td class="mono">${e.row}</td>`
+      + `<td class="mono">${escapeHtml(e.biz)}</td>`
+      + `<td>${escapeHtml(e.cur)}</td>`
+      + `<td><span class="pill warn">${escapeHtml(e.why)}</span></td>`
+      + `</tr>`;
+  }
+  return head + body + '</tbody>';
+}
+
+function bokWatchTableHTML(rows) {
+  const head = `<thead><tr><th>Excel Row</th><th>Transaction No</th><th>Cur</th><th class="num">Entered (in file)</th><th class="num">Exact formula</th><th>Deviation</th></tr></thead>`;
+  if (!rows.length) return head + bokNoneRow(6, 'None — all accepted rows are within 2% of the exact formula.');
+  let body = '<tbody>';
+  for (const e of rows) {
+    body += `<tr>`
+      + `<td class="mono">${e.row}</td>`
+      + `<td class="mono">${escapeHtml(e.biz)}</td>`
+      + `<td>${escapeHtml(e.cur)}</td>`
+      + `<td class="num mono">${bokFmt(e.entered)}</td>`
+      + `<td class="num mono">${bokFmt(e.correct)}</td>`
+      + `<td><span class="pill neutral">${escapeHtml(e.why)}</span></td>`
+      + `</tr>`;
+  }
+  return head + body + '</tbody>';
+}
+
+// ── BOK views / processing ─────────────────────────────────
+function bokShowView(viewId) {
+  ['bokUploadView', 'bokLoadingView', 'bokReportView', 'bokErrorView'].forEach(id => {
+    document.getElementById(id).classList.toggle('hidden', id !== viewId);
+  });
+}
+
+function bokShowError(msg) {
+  document.getElementById('bokErrorMsg').textContent = msg;
+  bokShowView('bokErrorView');
+}
+
+function bokResetUI() {
+  bokState = { filename: '', workbook: null, results: null };
+  document.getElementById('bokFileInput').value = '';
+  bokShowView('bokUploadView');
+}
+
+function bokProcessFile(file) {
+  bokState.filename = file.name;
+  bokShowView('bokLoadingView');
+  document.getElementById('bokLoadingMsg').textContent = 'Reading workbook…';
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      document.getElementById('bokLoadingMsg').textContent = 'Checking USD conversions…';
+      setTimeout(() => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+          bokState.workbook = workbook;
+          const res = validateBok(workbook);
+          if (!res.total) {
+            throw new Error('No data rows found. A BOK FX1014 report has English headers on row 1, Korean headers on row 2, and data starting at row 3 — with BOK NO in column E.');
+          }
+          bokState.results = res;
+          renderBokReport(res);
+          bokShowView('bokReportView');
+        } catch (err) {
+          bokShowError(err.message);
+        }
+      }, 50);
+    } catch (err) {
+      bokShowError(err.message);
+    }
+  };
+  reader.onerror = function() { bokShowError('Failed to read the file.'); };
+  reader.readAsArrayBuffer(file);
+}
+
+// ── BOK error report download ──────────────────────────────
+function downloadBokReport() {
+  if (!bokState.results) return;
+  const res = bokState.results;
+  const out = XLSX.utils.book_new();
+
+  const errRows = new Set();
+  res.jErr.forEach(e => errRows.add(e.row));
+  res.tErr.forEach(e => errRows.add(e.row));
+  res.rate0.forEach(e => errRows.add(e.row));
+
+  const summary = [
+    ['BOK FX1014 — USD Conversion Verification'],
+    ['Source file', bokState.filename],
+    ['Sheet', res.sheetName],
+    ['Generated', res.timestamp.toLocaleString()],
+    [],
+    ['Records checked', res.total],
+    ['Valid rows', res.total - errRows.size],
+    ['Rows BOK would flag', errRows.size],
+    ['Column J errors (H÷I, >20% off)', res.jErr.length],
+    ['Column T errors (R÷S, >25% off)', res.tErr.length],
+    ['Rate = 0 open items', res.rate0.length],
+    ['Watch list (within tol, >2% off)', res.jSoft.length],
+  ];
+  const sSheet = XLSX.utils.aoa_to_sheet(summary);
+  sSheet['!cols'] = [{ wch: 36 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(out, sSheet, 'Summary');
+
+  const errHeader = ['Check', 'Excel Row', 'Transaction No', 'Currency', 'Entered (in file)', 'Correct value', 'Reason'];
+  const errData = [errHeader];
+  res.jErr.forEach(e => errData.push(['Column J', e.row, e.biz, e.cur, e.entered, e.correct, e.why]));
+  res.tErr.forEach(e => errData.push(['Column T', e.row, e.biz, e.cur, e.entered, e.correct, e.why]));
+  res.rate0.forEach(e => errData.push(['Rate = 0', e.row, e.biz, e.cur, '', '', e.why]));
+  const eSheet = XLSX.utils.aoa_to_sheet(errData);
+  eSheet['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 26 }, { wch: 8 }, { wch: 16 }, { wch: 16 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(out, eSheet, 'Errors');
+
+  if (res.jSoft.length) {
+    const wHeader = ['Excel Row', 'Transaction No', 'Currency', 'Entered (in file)', 'Exact formula', 'Deviation'];
+    const wData = [wHeader, ...res.jSoft.map(e => [e.row, e.biz, e.cur, e.entered, e.correct, e.why])];
+    const wSheet = XLSX.utils.aoa_to_sheet(wData);
+    wSheet['!cols'] = [{ wch: 10 }, { wch: 26 }, { wch: 8 }, { wch: 16 }, { wch: 16 }, { wch: 28 }];
+    XLSX.utils.book_append_sheet(out, wSheet, 'Watch list');
+  }
+
+  const stamp = res.timestamp.toISOString().slice(0, 10);
+  const outName = bokState.filename.replace(/\.xlsx?$/i, '') + '__FX1014_Errors_' + stamp + '.xlsx';
+  XLSX.writeFile(out, outName);
+}
+
+// ── Top-level mode switch ──────────────────────────────────
+function switchMode(mode) {
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  document.getElementById('reconMode').classList.toggle('hidden', mode !== 'recon');
+  document.getElementById('bokMode').classList.toggle('hidden', mode !== 'bok');
+  // Header action buttons belong to the Reconciliation flow.
+  const newBtn = document.getElementById('newFileBtn');
+  const dlBtn = document.getElementById('downloadBtn');
+  if (mode === 'bok') {
+    newBtn.classList.add('hidden');
+    dlBtn.classList.add('hidden');
+  } else if (state.results) {
+    newBtn.classList.remove('hidden');
+    dlBtn.classList.remove('hidden');
+  }
+}
+
+// ============================================================
 // Event wiring
 // ============================================================
 // Initialize masthead date (kept in JS for the option to date-stamp later)
@@ -3484,15 +3940,55 @@ dropzone.addEventListener('drop', (e) => {
   }
 });
 
-// Tab switching
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+// BOK FX1014 dropzone
+const bokDropzone = document.getElementById('bokDropzone');
+const bokFileInput = document.getElementById('bokFileInput');
+
+bokFileInput.addEventListener('change', (e) => {
+  if (e.target.files.length) bokProcessFile(e.target.files[0]);
+});
+['dragenter', 'dragover'].forEach(evt => {
+  bokDropzone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    bokDropzone.classList.add('dragging');
   });
 });
+['dragleave', 'drop'].forEach(evt => {
+  bokDropzone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    bokDropzone.classList.remove('dragging');
+  });
+});
+bokDropzone.addEventListener('drop', (e) => {
+  if (e.dataTransfer.files.length) {
+    const f = e.dataTransfer.files[0];
+    if (/\.xlsx?$|\.xlsm$/i.test(f.name)) {
+      bokProcessFile(f);
+    } else {
+      bokShowError('Please upload a .xlsx, .xls, or .xlsm file.');
+    }
+  }
+});
+
+// Tab switching — scoped per container so the Reconciliation report and the
+// BOK report each manage their own tab group independently.
+function wireTabs(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      container.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      container.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      const panel = container.querySelector('#panel-' + tab.dataset.tab);
+      if (panel) panel.classList.add('active');
+    });
+  });
+}
+wireTabs('reportView');
+wireTabs('bokReportView');
 
 // Reconciliation filters
 document.getElementById('reconSearch').addEventListener('input', () => {
