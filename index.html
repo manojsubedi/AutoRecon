@@ -2754,10 +2754,7 @@ function renderPartnerSummary(summary) {
     txnCount: acc.txnCount + r.txnCount,
     gross: acc.gross + r.gross,
     net: acc.net + r.net,
-    reconciled: acc.reconciled + r.reconciled,
-    exceptions: acc.exceptions + r.exceptions,
-    missingVoucher: acc.missingVoucher + r.missingVoucher,
-  }), { txnCount: 0, gross: 0, net: 0, reconciled: 0, exceptions: 0, missingVoucher: 0 });
+  }), { txnCount: 0, gross: 0, net: 0 });
 
   table.innerHTML = `
     <thead><tr>
@@ -2766,9 +2763,6 @@ function renderPartnerSummary(summary) {
       <th class="num th-help" title="Number of transactions routed to this partner.">Txns</th>
       <th class="num th-help" title="Sum of collection_amount (raw amount collected from the merchant). Commas/[NULL] cleaned to numbers. No FX conversion — summed in raw units, so mixed-currency partners show a raw total.">Gross collection</th>
       <th class="num th-help" title="Sum of (collection_amount − service_charge). Gross minus GME's service charge. Gross − Net = total service charge for this partner.">Net</th>
-      <th class="num th-help" title="Transactions with status exactly &quot;Reconciled&quot; — passed all stages (confirm, dispatch, balanced). Same rule as the Reconciled KPI.">Reconciled</th>
-      <th class="num th-help" title="Transactions not fully reconciled — everything except status &quot;Reconciled&quot; (includes ref-mismatch, unbalanced, amount mismatch, and missing vouchers).">Exceptions</th>
-      <th class="num th-help" title="Transactions missing a confirm and/or dispatch voucher leg (status Both / Confirm / Dispatch missing). Subset of Exceptions.">Missing voucher</th>
     </tr></thead>
     <tbody>
       ${summary.map(r => `
@@ -2778,9 +2772,6 @@ function renderPartnerSummary(summary) {
           <td class="num mono">${fmt(r.txnCount)}</td>
           <td class="num mono">${fmt(r.gross)}</td>
           <td class="num mono">${fmt(r.net)}</td>
-          <td class="num mono" style="color: var(--good)">${fmt(r.reconciled)}</td>
-          <td class="num mono" style="color: ${r.exceptions > 0 ? 'var(--warn)' : 'var(--ink-3)'}">${fmt(r.exceptions)}</td>
-          <td class="num mono" style="color: ${r.missingVoucher > 0 ? 'var(--bad)' : 'var(--ink-3)'}">${fmt(r.missingVoucher)}</td>
         </tr>
       `).join('')}
     </tbody>
@@ -2791,9 +2782,6 @@ function renderPartnerSummary(summary) {
         <td class="num mono">${fmt(totals.txnCount)}</td>
         <td class="num mono">${fmt(totals.gross)}</td>
         <td class="num mono">${fmt(totals.net)}</td>
-        <td class="num mono">${fmt(totals.reconciled)}</td>
-        <td class="num mono">${fmt(totals.exceptions)}</td>
-        <td class="num mono">${fmt(totals.missingVoucher)}</td>
       </tr>
     </tfoot>
   `;
