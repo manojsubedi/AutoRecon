@@ -1155,7 +1155,7 @@
   <!-- Top-level mode switch -->
   <nav class="mode-nav" id="modeNav">
     <button class="mode-btn active" data-mode="recon" onclick="switchMode('recon')">Reconciliation</button>
-    <button class="mode-btn" data-mode="bok" onclick="switchMode('bok')">BOK Verification <span class="mode-btn-tag">FX1014</span></button>
+    <button class="mode-btn" data-mode="bok" onclick="switchMode('bok')">BOK Verification <span class="mode-btn-tag">FX1014 / FX1015</span></button>
   </nav>
 
   <!-- ═══════════════ MODE: Reconciliation ═══════════════ -->
@@ -1437,15 +1437,16 @@
     <div id="bokUploadView">
       <div class="upload-hero">
         <div class="upload-hero-text">
-          <div class="byline">BOK FX1014 · <span>USD conversion check</span></div>
+          <div class="byline">BOK FX1014 / FX1015 · <span>USD conversion check</span></div>
           <h1>Verify<em>before you submit.</em></h1>
-          <p class="lede">Upload a <strong>BOK FX1014</strong> per-transaction report (<code>bok-report.xlsx</code>) and this re-runs the Bank&nbsp;of&nbsp;Korea USD-conversion checks locally — the same rules that produced the <strong>28 J-errors + 5 T-errors</strong> on the 2026-06-30 filing. It flags every row BOK would reject <strong>before</strong> you send the file.</p>
+          <p class="lede">Upload a <strong>BOK FX1014</strong> (outbound) or <strong>FX1015</strong> (inbound) per-transaction report and this re-runs the Bank&nbsp;of&nbsp;Korea USD-conversion checks locally — the same rules that produced the <strong>28 J-errors + 5 T-errors</strong> on the 2026-06-30 filing. The report type is detected automatically and every row BOK would reject is flagged <strong>before</strong> you send the file.</p>
           <div class="upload-notes">
             <h4>What it checks</h4>
             <ul>
-              <li><strong>Column J</strong> (송금USD환산금액) must equal <code>H ÷ I</code> = PAYOUT AMOUNT ÷ USD V LCY RATE — positive, rejected when &gt; <strong>20%</strong> off.</li>
-              <li><strong>Column T</strong> (송금의뢰USD환산금액) must equal <code>R ÷ S</code> = COLLECTION AMOUNT ÷ USD V COLLECTION RATE — positive, rejected when &gt; <strong>25%</strong> off.</li>
-              <li>Rate = 0 rows (I or S = 0) are flagged as open items — formula undefined, needs a manual fix.</li>
+              <li>Each report carries <strong>two USD-converted amounts</strong>; each must equal <code>amount ÷ rate</code>, be positive and rounded to 2 decimals.</li>
+              <li><strong>FX1014:</strong> J (송금USD환산금액) = PAYOUT AMOUNT ÷ USD V LCY RATE; T (송금의뢰USD환산금액) = COLLECTION AMOUNT ÷ USD V COLLECTION RATE.</li>
+              <li><strong>FX1015:</strong> J (송금USD환산금액) = COLLECTION AMOUNT ÷ COLLECTION USD RATE; S (송금수취USD환산금액) = PAYOUT AMOUNT ÷ PAYOUT USD RATE.</li>
+              <li>Primary side rejected &gt; <strong>20%</strong> off, secondary &gt; <strong>25%</strong> off; rate = 0 rows are flagged as open items.</li>
               <li>Data starts at <strong>row 3</strong> (row 1 = English headers, row 2 = Korean headers). Nothing is uploaded — all processing runs in your browser.</li>
             </ul>
           </div>
@@ -1487,24 +1488,24 @@
 
       <section>
         <div class="section-head">
-          <h2>USD conversion errors <em>FX1014</em></h2>
+          <h2>USD conversion errors <em id="bokFormatTag">FX1014</em></h2>
           <span class="section-meta" id="bokVerdict"></span>
         </div>
 
         <div class="tabs">
-          <button class="tab active" data-tab="bokj">Column J errors <span class="count" id="bokJCount">0</span></button>
-          <button class="tab" data-tab="bokt">Column T errors <span class="count" id="bokTCount">0</span></button>
+          <button class="tab active" data-tab="bokj"><span id="bokC1TabLabel">Column J errors</span> <span class="count" id="bokJCount">0</span></button>
+          <button class="tab" data-tab="bokt"><span id="bokC2TabLabel">Column T errors</span> <span class="count" id="bokTCount">0</span></button>
           <button class="tab" data-tab="bokrate0">Rate = 0 <span class="count" id="bokRate0Count">0</span></button>
           <button class="tab" data-tab="bokwatch">Watch list <span class="count" id="bokWatchCount">0</span></button>
         </div>
 
         <div class="tab-panel active" id="panel-bokj">
-          <p class="flow-intro" style="margin-bottom:14px;">Column&nbsp;J (송금USD환산금액) must equal <code>PAYOUT AMOUNT ÷ USD V LCY RATE</code>, positive and rounded to 2 decimals. BOK rejects any row deviating more than <strong>20%</strong> from that value, or any negative value.</p>
+          <p class="flow-intro" id="bokC1Intro" style="margin-bottom:14px;">Column&nbsp;J (송금USD환산금액) must equal <code>PAYOUT AMOUNT ÷ USD V LCY RATE</code>, positive and rounded to 2 decimals. BOK rejects any row deviating more than <strong>20%</strong> from that value, or any negative value.</p>
           <div class="table-wrap"><table id="bokJTable"></table></div>
         </div>
 
         <div class="tab-panel" id="panel-bokt">
-          <p class="flow-intro" style="margin-bottom:14px;">Column&nbsp;T (송금의뢰USD환산금액) must equal <code>COLLECTION AMOUNT ÷ USD V COLLECTION RATE</code>, positive and rounded to 2 decimals. Tolerance is looser than J — rejected around <strong>25%</strong> off.</p>
+          <p class="flow-intro" id="bokC2Intro" style="margin-bottom:14px;">Column&nbsp;T (송금의뢰USD환산금액) must equal <code>COLLECTION AMOUNT ÷ USD V COLLECTION RATE</code>, positive and rounded to 2 decimals. Tolerance is looser than J — rejected around <strong>25%</strong> off.</p>
           <div class="table-wrap"><table id="bokTTable"></table></div>
         </div>
 
@@ -3608,18 +3609,55 @@ function downloadReport() {
 }
 
 // ============================================================
-// BOK FX1014 — USD conversion verification
-// Port of validate_fx1014.py. Rules (see VALIDATION_RULES.md):
-//   Data starts at row 3 (rows 1-2 are headers).
-//   J (송금USD환산금액)   = H / I   (PAYOUT AMOUNT / USD V LCY RATE)          -- POSITIVE, 2 dp
-//   T (송금의뢰USD환산금액) = R / S   (COLLECTION AMOUNT / USD V COLLECTION RATE) -- POSITIVE, 2 dp
-//   BOK tolerance: J rejected > ~20% off ; T looser (~25%). Sign must be POSITIVE.
-//   Rate = 0 (I or S = 0) -> formula undefined, flag as an open item.
+// BOK USD-conversion verification — FX1014 (outbound) + FX1015 (inbound)
+// Both filings carry two USD-converted amounts that must each equal
+// (amount ÷ rate), be POSITIVE and rounded to 2 dp. The column layout
+// differs between the two formats, so the report type is auto-detected
+// from the English header row and the right column map is applied.
+//   Data starts at row 3 (row 1 = English headers, row 2 = Korean headers).
+//   BOK tolerance: primary side rejected > ~20% off ; secondary looser (~25%).
+//   Rate = 0 -> formula undefined, flagged as an open item.
+// ------------------------------------------------------------
+//   FX1014 (outbound remittance):
+//     J (송금USD환산금액)     = H ÷ I  (PAYOUT AMOUNT ÷ USD V LCY RATE)
+//     T (송금의뢰USD환산금액)  = R ÷ S  (COLLECTION AMOUNT ÷ USD V COLLECTION RATE)
+//   FX1015 (inbound remittance):
+//     J (송금USD환산금액)     = H ÷ I  (COLLECTION AMOUNT ÷ COLLECTION USD RATE)
+//     S (송금수취USD환산금액)  = Q ÷ R  (PAYOUT AMOUNT ÷ PAYOUT USD RATE)
 // ============================================================
-const BOK_J_TOL = 0.20;   // column J deviation that BOK rejects
-const BOK_T_TOL = 0.25;   // column T tolerance is looser than J
-// Column letters -> 0-based index for header:1 arrays
-const BOK_COL = { E: 4, G: 6, H: 7, I: 8, J: 9, R: 17, S: 18, T: 19 };
+const BOK_J_TOL = 0.20;   // primary-side deviation that BOK rejects
+const BOK_T_TOL = 0.25;   // secondary side tolerance is looser
+
+// 0-based column index -> Excel column letter (for display)
+function bokColL(i) {
+  let s = '', n = i + 1;
+  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
+// Report-type definitions. Each side: usd=converted-amount col, amt=source
+// amount col, rate=USD rate col, cur=currency col (all 0-based). biz=BOK NO col.
+const BOK_TYPES = {
+  FX1014: {
+    id: 'FX1014', flow: 'outbound remittance', biz: 4,
+    c1: { name: 'Column J', ko: '송금USD환산금액',    usd: 9,  amt: 7,  rate: 8,  cur: 6,  amtLabel: 'PAYOUT AMOUNT',     rateLabel: 'USD V LCY RATE',        tol: BOK_J_TOL },
+    c2: { name: 'Column T', ko: '송금의뢰USD환산금액', usd: 19, amt: 17, rate: 18, cur: 16, amtLabel: 'COLLECTION AMOUNT', rateLabel: 'USD V COLLECTION RATE',  tol: BOK_T_TOL },
+  },
+  FX1015: {
+    id: 'FX1015', flow: 'inbound remittance', biz: 4,
+    c1: { name: 'Column J', ko: '송금USD환산금액',     usd: 9,  amt: 7,  rate: 8,  cur: 6,  amtLabel: 'COLLECTION AMOUNT', rateLabel: 'COLLECTION USD RATE', tol: BOK_J_TOL },
+    c2: { name: 'Column S', ko: '송금수취USD환산금액', usd: 18, amt: 16, rate: 17, cur: 15, amtLabel: 'PAYOUT AMOUNT',     rateLabel: 'PAYOUT USD RATE',     tol: BOK_T_TOL },
+  },
+};
+
+// Detect FX1014 vs FX1015 from the English header row (index 0).
+function bokDetectType(headerRow) {
+  const h = (headerRow || []).map(x => (x == null ? '' : String(x).trim().toUpperCase()));
+  const has = s => h.some(c => c === s);
+  if (has('USD V LCY RATE') || has('USD V COLLECTION RATE')) return BOK_TYPES.FX1014;
+  if (has('COLLECTION USD RATE') && has('PAYOUT USD RATE'))   return BOK_TYPES.FX1015;
+  return null;
+}
 
 let bokState = { filename: '', workbook: null, results: null };
 
@@ -3636,10 +3674,36 @@ function bokFmt(n) {
   return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
+// One side (usd = amt ÷ rate). Pushes into err/rate0/soft as appropriate.
+// `soft` may be null when a side is not tracked on the watch list.
+function bokCheckSide(row, side, excelRow, biz, err, rate0, soft) {
+  const cur = row[side.cur] == null ? '' : String(row[side.cur]).trim();
+  const amt = bokNum(row[side.amt]);
+  const rate = bokNum(row[side.rate]);
+  const usd = bokNum(row[side.usd]);
+  const uL = bokColL(side.usd);
+
+  if (rate === 0 || rate === null) {
+    rate0.push({ row: excelRow, biz, cur, why: `${side.name}: ${side.rateLabel} (${bokColL(side.rate)}) = 0 → ${bokColL(side.amt)}÷${bokColL(side.rate)} undefined` });
+    return;
+  }
+  if (amt === null || usd === null) return;
+  const correct = Math.round((amt / rate) * 100) / 100;
+  const dev = Math.abs(usd / (amt / rate) - 1);
+  if (usd < 0) err.push({ row: excelRow, biz, cur, entered: usd, correct, why: 'NEGATIVE sign' });
+  else if (dev > side.tol) err.push({ row: excelRow, biz, cur, entered: usd, correct, why: (dev * 100).toFixed(1) + '% off' });
+  else if (soft && dev > 0.02) soft.push({ row: excelRow, biz, cur, entered: usd, correct, why: (dev * 100).toFixed(1) + '% off (within tol)' });
+}
+
 function validateBok(workbook) {
   const sheetName = workbook.SheetNames[0];
   const ws = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+
+  const type = bokDetectType(rows[0]);
+  if (!type) {
+    throw new Error('Unrecognized BOK report. Expected an FX1014 report (has "USD V LCY RATE") or an FX1015 report (has "COLLECTION USD RATE" and "PAYOUT USD RATE") with English headers on row 1.');
+  }
 
   const jErr = [], tErr = [], rate0 = [], jSoft = [];
   let total = 0;
@@ -3647,44 +3711,36 @@ function validateBok(workbook) {
   // Data starts at row 3 -> array index 2
   for (let i = 2; i < rows.length; i++) {
     const row = rows[i] || [];
-    const biz = row[BOK_COL.E];
+    const biz = row[type.biz];
     if (biz === null || biz === undefined || String(biz).trim() === '') continue;
     total++;
-    const cur = row[BOK_COL.G] == null ? '' : String(row[BOK_COL.G]).trim();
-    const H = bokNum(row[BOK_COL.H]), I = bokNum(row[BOK_COL.I]), J = bokNum(row[BOK_COL.J]);
-    const R = bokNum(row[BOK_COL.R]), S = bokNum(row[BOK_COL.S]), T = bokNum(row[BOK_COL.T]);
     const excelRow = i + 1;
-
-    // Column J = H / I
-    if (I === 0 || I === null) {
-      rate0.push({ row: excelRow, biz, cur, why: 'J: USD V LCY RATE (I) = 0 → H÷I undefined' });
-    } else if (H !== null && J !== null) {
-      const correct = Math.round((H / I) * 100) / 100;
-      const dev = Math.abs(J / (H / I) - 1);
-      if (J < 0) jErr.push({ row: excelRow, biz, cur, entered: J, correct, why: 'NEGATIVE sign' });
-      else if (dev > BOK_J_TOL) jErr.push({ row: excelRow, biz, cur, entered: J, correct, why: (dev * 100).toFixed(1) + '% off' });
-      else if (dev > 0.02) jSoft.push({ row: excelRow, biz, cur, entered: J, correct, why: (dev * 100).toFixed(1) + '% off (within tol)' });
-    }
-
-    // Column T = R / S
-    if (S === 0 || S === null) {
-      rate0.push({ row: excelRow, biz, cur, why: 'T: USD V COLLECTION RATE (S) = 0 → R÷S undefined' });
-    } else if (R !== null && T !== null) {
-      const correct = Math.round((R / S) * 100) / 100;
-      const dev = Math.abs(T / (R / S) - 1);
-      if (T < 0) tErr.push({ row: excelRow, biz, cur, entered: T, correct, why: 'NEGATIVE sign' });
-      else if (dev > BOK_T_TOL) tErr.push({ row: excelRow, biz, cur, entered: T, correct, why: (dev * 100).toFixed(1) + '% off' });
-    }
+    // Primary side is watch-listed (jSoft); secondary side is not, to keep
+    // the accepted-but-drifting list focused on the tighter check.
+    bokCheckSide(row, type.c1, excelRow, biz, jErr, rate0, jSoft);
+    bokCheckSide(row, type.c2, excelRow, biz, tErr, rate0, null);
   }
 
-  return { sheetName, total, jErr, tErr, rate0, jSoft, timestamp: new Date() };
+  return { type, sheetName, total, jErr, tErr, rate0, jSoft, timestamp: new Date() };
 }
 
 // ── BOK rendering ──────────────────────────────────────────
 function renderBokReport(res) {
+  const t = res.type, c1 = t.c1, c2 = t.c2;
+  const f1 = `${bokColL(c1.amt)} ÷ ${bokColL(c1.rate)}`;
+  const f2 = `${bokColL(c2.amt)} ÷ ${bokColL(c2.rate)}`;
   document.getElementById('bokReportFilename').textContent = bokState.filename + ' · ' + res.sheetName;
   document.getElementById('bokReportSubtitle').textContent =
-    `${fmt(res.total)} records · ${res.timestamp.toLocaleString()}`;
+    `${t.id} · ${t.flow} · ${fmt(res.total)} records · ${res.timestamp.toLocaleString()}`;
+
+  // Retitle the format-specific labels for FX1014 vs FX1015.
+  document.getElementById('bokFormatTag').textContent = t.id;
+  document.getElementById('bokC1TabLabel').textContent = `${c1.name} errors`;
+  document.getElementById('bokC2TabLabel').textContent = `${c2.name} errors`;
+  document.getElementById('bokC1Intro').innerHTML =
+    `<strong>${c1.name}</strong> (${escapeHtml(c1.ko)}) must equal <code>${escapeHtml(c1.amtLabel)} ÷ ${escapeHtml(c1.rateLabel)}</code>, positive and rounded to 2 decimals. BOK rejects any row deviating more than <strong>${Math.round(c1.tol * 100)}%</strong> from that value, or any negative value.`;
+  document.getElementById('bokC2Intro').innerHTML =
+    `<strong>${c2.name}</strong> (${escapeHtml(c2.ko)}) must equal <code>${escapeHtml(c2.amtLabel)} ÷ ${escapeHtml(c2.rateLabel)}</code>, positive and rounded to 2 decimals. Tolerance is looser — rejected around <strong>${Math.round(c2.tol * 100)}%</strong> off.`;
 
   const errRows = new Set();
   res.jErr.forEach(e => errRows.add(e.row));
@@ -3713,8 +3769,8 @@ function renderBokReport(res) {
     kpi('Records checked', '01', fmt(res.total),
         `<span class="pos">${fmt(valid)} valid</span> · <span class="${rejects ? 'neg' : ''}">${fmt(rejects)} with errors</span>`,
         { primary: true }) +
-    kpi('Column J errors', 'J', fmt(res.jErr.length), '송금USD환산금액 = H÷I', { bad: true }) +
-    kpi('Column T errors', 'T', fmt(res.tErr.length), '송금의뢰USD환산금액 = R÷S', { bad: true }) +
+    kpi(`${c1.name} errors`, bokColL(c1.usd), fmt(res.jErr.length), `${escapeHtml(c1.ko)} = ${f1}`, { bad: true }) +
+    kpi(`${c2.name} errors`, bokColL(c2.usd), fmt(res.tErr.length), `${escapeHtml(c2.ko)} = ${f2}`, { bad: true }) +
     kpi('Rate = 0 · open items', '!', fmt(res.rate0.length), 'formula undefined — needs manual fix', { bad: true });
 
   // Tab counts
@@ -3817,7 +3873,7 @@ function bokProcessFile(file) {
           bokState.workbook = workbook;
           const res = validateBok(workbook);
           if (!res.total) {
-            throw new Error('No data rows found. A BOK FX1014 report has English headers on row 1, Korean headers on row 2, and data starting at row 3 — with BOK NO in column E.');
+            throw new Error('No data rows found. A BOK ' + res.type.id + ' report has English headers on row 1, Korean headers on row 2, and data starting at row 3 — with BOK NO in column E.');
           }
           bokState.results = res;
           renderBokReport(res);
@@ -3838,6 +3894,9 @@ function bokProcessFile(file) {
 function downloadBokReport() {
   if (!bokState.results) return;
   const res = bokState.results;
+  const t = res.type, c1 = t.c1, c2 = t.c2;
+  const f1 = `${bokColL(c1.amt)}÷${bokColL(c1.rate)}`;
+  const f2 = `${bokColL(c2.amt)}÷${bokColL(c2.rate)}`;
   const out = XLSX.utils.book_new();
 
   const errRows = new Set();
@@ -3846,7 +3905,7 @@ function downloadBokReport() {
   res.rate0.forEach(e => errRows.add(e.row));
 
   const summary = [
-    ['BOK FX1014 — USD Conversion Verification'],
+    [`BOK ${t.id} — USD Conversion Verification (${t.flow})`],
     ['Source file', bokState.filename],
     ['Sheet', res.sheetName],
     ['Generated', res.timestamp.toLocaleString()],
@@ -3854,8 +3913,8 @@ function downloadBokReport() {
     ['Records checked', res.total],
     ['Valid rows', res.total - errRows.size],
     ['Rows BOK would flag', errRows.size],
-    ['Column J errors (H÷I, >20% off)', res.jErr.length],
-    ['Column T errors (R÷S, >25% off)', res.tErr.length],
+    [`${c1.name} errors (${f1}, >${Math.round(c1.tol * 100)}% off)`, res.jErr.length],
+    [`${c2.name} errors (${f2}, >${Math.round(c2.tol * 100)}% off)`, res.tErr.length],
     ['Rate = 0 open items', res.rate0.length],
     ['Watch list (within tol, >2% off)', res.jSoft.length],
   ];
@@ -3865,8 +3924,8 @@ function downloadBokReport() {
 
   const errHeader = ['Check', 'Excel Row', 'Transaction No', 'Currency', 'Entered (in file)', 'Correct value', 'Reason'];
   const errData = [errHeader];
-  res.jErr.forEach(e => errData.push(['Column J', e.row, e.biz, e.cur, e.entered, e.correct, e.why]));
-  res.tErr.forEach(e => errData.push(['Column T', e.row, e.biz, e.cur, e.entered, e.correct, e.why]));
+  res.jErr.forEach(e => errData.push([c1.name, e.row, e.biz, e.cur, e.entered, e.correct, e.why]));
+  res.tErr.forEach(e => errData.push([c2.name, e.row, e.biz, e.cur, e.entered, e.correct, e.why]));
   res.rate0.forEach(e => errData.push(['Rate = 0', e.row, e.biz, e.cur, '', '', e.why]));
   const eSheet = XLSX.utils.aoa_to_sheet(errData);
   eSheet['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 26 }, { wch: 8 }, { wch: 16 }, { wch: 16 }, { wch: 40 }];
@@ -3881,7 +3940,7 @@ function downloadBokReport() {
   }
 
   const stamp = res.timestamp.toISOString().slice(0, 10);
-  const outName = bokState.filename.replace(/\.xlsx?$/i, '') + '__FX1014_Errors_' + stamp + '.xlsx';
+  const outName = bokState.filename.replace(/\.xlsx?$/i, '') + '__' + res.type.id + '_Errors_' + stamp + '.xlsx';
   XLSX.writeFile(out, outName);
 }
 
