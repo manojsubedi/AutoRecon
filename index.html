@@ -3780,8 +3780,8 @@ function renderBokReport(res) {
   document.getElementById('bokWatchCount').textContent = res.jSoft.length;
 
   // Tables
-  document.getElementById('bokJTable').innerHTML = bokErrTableHTML(res.jErr, 'Column J');
-  document.getElementById('bokTTable').innerHTML = bokErrTableHTML(res.tErr, 'Column T');
+  document.getElementById('bokJTable').innerHTML = bokErrTableHTML(res.jErr, c1.name);
+  document.getElementById('bokTTable').innerHTML = bokErrTableHTML(res.tErr, c2.name);
   document.getElementById('bokRate0Table').innerHTML = bokRate0TableHTML(res.rate0);
   document.getElementById('bokWatchTable').innerHTML = bokWatchTableHTML(res.jSoft);
 }
