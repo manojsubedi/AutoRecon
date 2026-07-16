@@ -1336,6 +1336,7 @@
         <button class="tab active" data-tab="verify">Verify <span class="count" id="verifyCount">0</span></button>
         <button class="tab" data-tab="recon">Reconciliation <span class="count" id="reconCount">0</span></button>
         <button class="tab" data-tab="partner">By partner <span class="count" id="partnerCount">0</span></button>
+        <button class="tab" data-tab="dailysent">Daily sent <span class="count" id="dailySentCount">0</span></button>
         <button class="tab" data-tab="exceptions">Exceptions <span class="count" id="excCount">0</span></button>
         <button class="tab" data-tab="deposits">Unmatched deposits <span class="count" id="depCount">0</span></button>
         <button class="tab" data-tab="dq">Data quality <span class="count" id="dqCount">0</span></button>
@@ -1369,6 +1370,16 @@
       <div class="tab-panel" id="panel-partner">
         <div class="table-wrap">
           <table class="summary-table" id="partnerTable"></table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-dailysent">
+        <p class="verify-intro">Daily sent volume — one row per <strong>partner ledger</strong> (partner + settlement currency) per day. <strong>Sent Amount</strong> is the total <code>settlement_amount</code> sent to the partner that day, in the partner's settlement currency.</p>
+        <div class="filter-bar">
+          <input type="search" id="dailySentSearch" placeholder="Search by partner ledger or currency…">
+        </div>
+        <div class="table-wrap">
+          <table class="summary-table" id="dailySentTable"></table>
         </div>
       </div>
 
@@ -1488,7 +1499,7 @@
 
       <section>
         <div class="section-head">
-          <h2>USD conversion errors <em id="bokFormatTag">FX1014</em></h2>
+          <h2>USD conversion &amp; field-length checks <em id="bokFormatTag">FX1014</em></h2>
           <span class="section-meta" id="bokVerdict"></span>
         </div>
 
@@ -1496,6 +1507,7 @@
           <button class="tab active" data-tab="bokj"><span id="bokC1TabLabel">Column J errors</span> <span class="count" id="bokJCount">0</span></button>
           <button class="tab" data-tab="bokt"><span id="bokC2TabLabel">Column T errors</span> <span class="count" id="bokTCount">0</span></button>
           <button class="tab" data-tab="bokrate0">Rate = 0 <span class="count" id="bokRate0Count">0</span></button>
+          <button class="tab" data-tab="boklen">Field lengths <span class="count" id="bokLenCount">0</span></button>
           <button class="tab" data-tab="bokwatch">Watch list <span class="count" id="bokWatchCount">0</span></button>
         </div>
 
@@ -1512,6 +1524,11 @@
         <div class="tab-panel" id="panel-bokrate0">
           <p class="flow-intro" style="margin-bottom:14px;">Rate = 0 (USD V LCY RATE <code>I</code> = 0, or USD V COLLECTION RATE <code>S</code> = 0) makes the formula undefined. These are <strong>open items</strong> — enter a real rate or use the opposite-side value. Do <strong>not</strong> invent a value.</p>
           <div class="table-wrap"><table id="bokRate0Table"></table></div>
+        </div>
+
+        <div class="tab-panel" id="panel-boklen">
+          <p class="flow-intro" style="margin-bottom:14px;">Each BOK FX1015 field has a fixed maximum length (속성/길이). Any value that exceeds it is <strong>rejected or silently truncated</strong> by BOK. Text fields count characters; dates count digits (YYYYMMDD = 8); amounts count digits plus the decimal point. Most commonly <strong>BENEFICIARY ID NUMBER (field 19, <code>X(15)</code>)</strong> overflows when a <code>BZ</code> prefix + 14-digit account number = 16 characters.</p>
+          <div class="table-wrap"><table id="bokLenTable"></table></div>
         </div>
 
         <div class="tab-panel" id="panel-bokwatch">
@@ -1887,6 +1904,8 @@ function reconcile(workbook) {
     const collAmt = toNum(r.collection_amount);
     const sc = toNum(r.service_charge);
     const netAmt = collAmt - sc;
+    // Amount actually sent to the partner, in the partner's settlement currency.
+    const settleAmt = toNum(r.settlement_amount);
     const collCcy = (r.merchant_collection_ccy ?? r.collection_currency) || '';
     const createdDate = r.created_date || r.processing_date;
     const processingDate = r.processing_date;
@@ -2003,6 +2022,7 @@ function reconcile(workbook) {
       collAmt,
       sc,
       netAmt,
+      settleAmt,
       collCcy,
       createdDate,
       processingDate,
@@ -2576,6 +2596,28 @@ function reconcile(workbook) {
     missingVoucher: a.missingVoucher,
   })).sort((a, b) => b.txnCount - a.txnCount);
 
+  // Daily sent volume — one row per partner-ledger (partner + settlement ccy) per day.
+  // "Sent Amount" is the sum of settlement_amount (what was actually sent to the partner,
+  // in the partner's settlement currency), bucketed by the txn's created date.
+  const dailyAgg = new Map();
+  for (const r of txnResults) {
+    const d = parseToDate(r.createdDate);
+    if (!d) continue;
+    const dayKey = fmtDate(d, false); // YYYY-MM-DD
+    const ccy = (r.partnerCcy || '').trim();
+    const partner = r.partner || 'Unknown';
+    const ledger = ccy ? `${partner} - ${ccy}` : partner;
+    const key = dayKey + '|' + ledger;
+    if (!dailyAgg.has(key)) {
+      dailyAgg.set(key, { dayKey, _date: d, ledger, partner, ccy, sent: 0, txnCount: 0 });
+    }
+    const a = dailyAgg.get(key);
+    a.sent += r.settleAmt;
+    a.txnCount++;
+  }
+  const dailySent = [...dailyAgg.values()].sort((a, b) =>
+    (a._date - b._date) || a.ledger.localeCompare(b.ledger));
+
   // KPIs
   const total = txnResults.length;
   const reconciled = seenStatuses['Reconciled'] || 0;
@@ -2620,6 +2662,7 @@ function reconcile(workbook) {
     kpis,
     merchantSummary,
     partnerSummary,
+    dailySent,
     txnResults,
     depositMatches,
     dataQuality: dqList,
@@ -2949,6 +2992,67 @@ function renderPartnerSummary(summary) {
   `;
   const badge = document.getElementById('partnerCount');
   if (badge) badge.textContent = summary.length;
+}
+
+// Daily sent volume — mirrors the shared "Daily Sent Volume" report:
+// Date · Partner Ledger · Sent Amount · Currency (one row per partner-ledger per day).
+const DS_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtDsDate(d) {
+  if (!d) return '—';
+  const day = String(d.getDate()).padStart(2, '0');
+  const yy = String(d.getFullYear()).slice(-2);
+  return `${day}-${DS_MONTHS[d.getMonth()]}-${yy}`;
+}
+
+function renderDailySent(rows) {
+  const table = document.getElementById('dailySentTable');
+  const badge = document.getElementById('dailySentCount');
+  if (badge) badge.textContent = rows.length;
+
+  const q = (document.getElementById('dailySentSearch')?.value || '').toLowerCase();
+  const filtered = q
+    ? rows.filter(r => (r.ledger + ' ' + r.ccy).toLowerCase().includes(q))
+    : rows;
+
+  if (!filtered.length) {
+    table.innerHTML = `<tbody><tr><td colspan="4" style="text-align:center;padding:48px;color:var(--ink-3);">No daily sent rows${q ? ' match your search' : ''}.</td></tr></tbody>`;
+    return;
+  }
+
+  // Total per currency (mixed currencies can't be summed into one figure).
+  const byCcy = new Map();
+  filtered.forEach(r => byCcy.set(r.ccy, (byCcy.get(r.ccy) || 0) + r.sent));
+  const totalCells = [...byCcy.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([c, s]) => `${fmt(s, 2)} ${escapeHtml(c || '—')}`)
+    .join(' · ');
+
+  table.innerHTML = `
+    <thead><tr>
+      <th class="th-help" title="Day the transactions were created (created_date), one bucket per calendar day.">Date</th>
+      <th class="th-help" title="Payout partner combined with its settlement currency — the ledger the funds were sent to.">Partner Ledger</th>
+      <th class="num th-help" title="Sum of settlement_amount for this partner ledger on this day — the amount actually sent to the partner, in its settlement currency.">Sent Amount</th>
+      <th class="th-help" title="partner_settlement_ccy — the currency the partner was settled in.">Currency</th>
+    </tr></thead>
+    <tbody>
+      ${filtered.map(r => `
+        <tr>
+          <td class="date-cell">${fmtDsDate(r._date)}</td>
+          <td>${escapeHtml(r.ledger)}</td>
+          <td class="num mono">${fmt(r.sent, 2)}</td>
+          <td class="mono" style="font-size:12px;color:var(--ink-3);">${escapeHtml(r.ccy || '—')}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td>Total</td>
+        <td></td>
+        <td class="num mono">${escapeHtml(totalCells)}</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  `;
 }
 
 function renderReconTable(rows) {
@@ -3428,6 +3532,7 @@ function renderReport(results) {
   renderVerify(results.guidelineChecks);
   renderMerchantSummary(results.merchantSummary);
   renderPartnerSummary(results.partnerSummary);
+  renderDailySent(results.dailySent);
   renderReconTable(results.txnResults);
   renderExceptions(results.txnResults);
   renderDeposits(results.depositMatches);
@@ -3539,6 +3644,18 @@ function downloadReport() {
     XLSX.utils.book_append_sheet(out, vSheet, 'Verify');
   }
 
+  // Sheet: Daily Sent Volume — mirrors the "Daily sent" tab / shared report.
+  if (results.dailySent && results.dailySent.length) {
+    const dsData = [
+      ['Daily Sent Volume — one row per partner ledger (partner + settlement currency) per day. Sent Amount = sum of settlement_amount sent to the partner that day.'],
+      ['Date', 'Partner Ledger', 'Sent Amount', 'Currency'],
+      ...results.dailySent.map(r => [fmtDsDate(r._date), r.ledger, r.sent, r.ccy]),
+    ];
+    const dsSheet = XLSX.utils.aoa_to_sheet(dsData);
+    dsSheet['!cols'] = [{wch:14},{wch:28},{wch:18},{wch:10}];
+    XLSX.utils.book_append_sheet(out, dsSheet, 'Daily Sent');
+  }
+
   // Sheet 3: Exceptions
   const exceptions = results.txnResults.filter(r => r.status !== 'Reconciled');
   if (exceptions.length) {
@@ -3647,6 +3764,36 @@ const BOK_TYPES = {
     id: 'FX1015', flow: 'inbound remittance', biz: 4,
     c1: { name: 'Column J', ko: '송금USD환산금액',     usd: 9,  amt: 7,  rate: 8,  cur: 6,  amtLabel: 'COLLECTION AMOUNT', rateLabel: 'COLLECTION USD RATE', tol: BOK_J_TOL },
     c2: { name: 'Column S', ko: '송금수취USD환산금액', usd: 18, amt: 16, rate: 17, cur: 15, amtLabel: 'PAYOUT AMOUNT',     rateLabel: 'PAYOUT USD RATE',     tol: BOK_T_TOL },
+    // Per-field length spec (BOK FX1015 field definition, 2025-12-18).
+    // i = 0-based report column; no = BOK field number; max = 속성/길이;
+    // kind: text = X(n) char count, num = 9(a,b) digits+point, date = digit count (YYYYMMDD).
+    lens: [
+      { i: 0,  no: 1,  en: 'COMPANY CODE',           ko: '보고기관코드',                   max: 4,  kind: 'text' },
+      { i: 1,  no: 2,  en: 'BRANCH CODE',            ko: '취급점포코드',                   max: 4,  kind: 'text' },
+      { i: 2,  no: 3,  en: 'BRANCH SPEC CODE',       ko: '취급점포스펙점별번호',           max: 6,  kind: 'text' },
+      { i: 3,  no: 8,  en: 'TRANSACTION TYPE',       ko: '전송구분코드',                   max: 1,  kind: 'text' },
+      { i: 4,  no: 10, en: 'BOK NO',                 ko: '일련번호',                       max: 20, kind: 'text' },
+      { i: 5,  no: 11, en: 'COLLECTION DATE',        ko: '송금일자',                       max: 8,  kind: 'date' },
+      { i: 6,  no: 12, en: 'COLLECTION CURRENCY',    ko: '송금통화코드',                   max: 3,  kind: 'text' },
+      { i: 7,  no: 13, en: 'COLLECTION AMOUNT',      ko: '송금외화금액',                   max: 16, kind: 'num'  },
+      { i: 8,  no: 14, en: 'COLLECTION USD RATE',    ko: '송금USD환산환율',                max: 12, kind: 'num'  },
+      { i: 9,  no: 15, en: 'COLLECTION USD AMOUNT',  ko: '송금USD환산금액',                max: 16, kind: 'num'  },
+      { i: 10, no: 16, en: 'PAYOUT DATE',            ko: '송금수취일자',                   max: 8,  kind: 'date' },
+      { i: 11, no: 17, en: 'BENEFICIARY NAME',       ko: '송금수취인명',                   max: 60, kind: 'text' },
+      { i: 12, no: 18, en: 'BENEFICIARY ID TYPE',    ko: '송금수취인주민사업자등록번호구분코드', max: 1,  kind: 'text' },
+      { i: 13, no: 19, en: 'BENEFICIARY ID NUMBER',  ko: '송금수취인 실명확인번호',        max: 15, kind: 'text' },
+      { i: 14, no: 20, en: 'BENEFICIARY COUNTRY',    ko: '송금수취인 국가코드',            max: 2,  kind: 'text' },
+      { i: 15, no: 21, en: 'PAYOUT CURRENCY',        ko: '송금수취인 통화코드',            max: 3,  kind: 'text' },
+      { i: 16, no: 22, en: 'PAYOUT AMOUNT',          ko: '송금수취금액',                   max: 16, kind: 'num'  },
+      { i: 17, no: 23, en: 'PAYOUT USD RATE',        ko: '송금수취USD환산환율',            max: 12, kind: 'num'  },
+      { i: 18, no: 24, en: 'PAYOUT USD AMOUNT',      ko: '송금수취USD환산금액',            max: 16, kind: 'num'  },
+      { i: 19, no: 25, en: 'MERCHANT UNIQUE ID',     ko: '송금수취인 관리번호',            max: 20, kind: 'text' },
+      { i: 20, no: 26, en: 'BENEFICIARY BANK NAME',  ko: '송금수취인 계좌개설은행',        max: 30, kind: 'text' },
+      { i: 21, no: 27, en: 'BENEFICIARY BANK AC NO', ko: '송금수취인 계좌번호',            max: 40, kind: 'text' },
+      { i: 22, no: 28, en: 'SENDER NAME',            ko: '송금의뢰인명',                   max: 60, kind: 'text' },
+      { i: 23, no: 29, en: 'SENDER RESIDENCY',       ko: '송금의뢰인 거주국코드',          max: 1,  kind: 'text' },
+      { i: 24, no: 30, en: 'SENDER COUNTRY',         ko: '송금의뢰인 국가코드',            max: 2,  kind: 'text' },
+    ],
   },
 };
 
@@ -3695,6 +3842,36 @@ function bokCheckSide(row, side, excelRow, biz, err, rate0, soft) {
   else if (soft && dev > 0.02) soft.push({ row: excelRow, biz, cur, entered: usd, correct, why: (dev * 100).toFixed(1) + '% off (within tol)' });
 }
 
+// Effective BOK length of a cell value, by field kind.
+//   text → character count of the trimmed string
+//   date → number of digits (a valid YYYY-MM-DD / Date collapses to 8)
+//   num  → digits plus the decimal point, ignoring sign, commas and spaces
+function bokLen(v, kind) {
+  if (v instanceof Date) return kind === 'date' ? 8 : 8;
+  const s = String(v).trim();
+  if (kind === 'date') return s.replace(/\D/g, '').length;
+  if (kind === 'num')  return s.replace(/[,\s+-]/g, '').length;
+  return s.length;
+}
+
+// Field-length validation: flag any value longer than its BOK-defined length.
+function bokCheckLengths(row, type, excelRow, biz, lenErr) {
+  if (!type.lens) return;
+  for (const f of type.lens) {
+    const raw = row[f.i];
+    if (raw === null || raw === undefined || String(raw).trim() === '') continue;
+    const len = bokLen(raw, f.kind);
+    if (len > f.max) {
+      lenErr.push({
+        row: excelRow, biz, col: bokColL(f.i), no: f.no, field: f.en, ko: f.ko,
+        value: raw instanceof Date ? '(date)' : String(raw).trim(),
+        len, max: f.max,
+        why: `${f.field} (field ${f.no}) = ${len} chars, max ${f.max}`,
+      });
+    }
+  }
+}
+
 function validateBok(workbook) {
   const sheetName = workbook.SheetNames[0];
   const ws = workbook.Sheets[sheetName];
@@ -3705,7 +3882,7 @@ function validateBok(workbook) {
     throw new Error('Unrecognized BOK report. Expected an FX1014 report (has "USD V LCY RATE") or an FX1015 report (has "COLLECTION USD RATE" and "PAYOUT USD RATE") with English headers on row 1.');
   }
 
-  const jErr = [], tErr = [], rate0 = [], jSoft = [];
+  const jErr = [], tErr = [], rate0 = [], jSoft = [], lenErr = [];
   let total = 0;
 
   // Data starts at row 3 -> array index 2
@@ -3719,9 +3896,10 @@ function validateBok(workbook) {
     // the accepted-but-drifting list focused on the tighter check.
     bokCheckSide(row, type.c1, excelRow, biz, jErr, rate0, jSoft);
     bokCheckSide(row, type.c2, excelRow, biz, tErr, rate0, null);
+    bokCheckLengths(row, type, excelRow, biz, lenErr);
   }
 
-  return { type, sheetName, total, jErr, tErr, rate0, jSoft, timestamp: new Date() };
+  return { type, sheetName, total, jErr, tErr, rate0, jSoft, lenErr, timestamp: new Date() };
 }
 
 // ── BOK rendering ──────────────────────────────────────────
@@ -3746,6 +3924,7 @@ function renderBokReport(res) {
   res.jErr.forEach(e => errRows.add(e.row));
   res.tErr.forEach(e => errRows.add(e.row));
   res.rate0.forEach(e => errRows.add(e.row));
+  (res.lenErr || []).forEach(e => errRows.add(e.row));
   const rejects = errRows.size;
   const valid = res.total - rejects;
 
@@ -3771,18 +3950,25 @@ function renderBokReport(res) {
         { primary: true }) +
     kpi(`${c1.name} errors`, bokColL(c1.usd), fmt(res.jErr.length), `${escapeHtml(c1.ko)} = ${f1}`, { bad: true }) +
     kpi(`${c2.name} errors`, bokColL(c2.usd), fmt(res.tErr.length), `${escapeHtml(c2.ko)} = ${f2}`, { bad: true }) +
-    kpi('Rate = 0 · open items', '!', fmt(res.rate0.length), 'formula undefined — needs manual fix', { bad: true });
+    kpi('Rate = 0 · open items', '!', fmt(res.rate0.length), 'formula undefined — needs manual fix', { bad: true }) +
+    kpi('Field-length errors', 'L', fmt((res.lenErr || []).length), 'values longer than the BOK field spec', { bad: true });
 
   // Tab counts
   document.getElementById('bokJCount').textContent = res.jErr.length;
   document.getElementById('bokTCount').textContent = res.tErr.length;
   document.getElementById('bokRate0Count').textContent = res.rate0.length;
+  document.getElementById('bokLenCount').textContent = (res.lenErr || []).length;
   document.getElementById('bokWatchCount').textContent = res.jSoft.length;
+
+  // Length-check tab is only meaningful when a length spec exists for this type.
+  const lenTab = document.querySelector('.tab[data-tab="boklen"]');
+  if (lenTab) lenTab.style.display = t.lens ? '' : 'none';
 
   // Tables
   document.getElementById('bokJTable').innerHTML = bokErrTableHTML(res.jErr, c1.name);
   document.getElementById('bokTTable').innerHTML = bokErrTableHTML(res.tErr, c2.name);
   document.getElementById('bokRate0Table').innerHTML = bokRate0TableHTML(res.rate0);
+  document.getElementById('bokLenTable').innerHTML = bokLenTableHTML(res.lenErr || [], t.lens);
   document.getElementById('bokWatchTable').innerHTML = bokWatchTableHTML(res.jSoft);
 }
 
@@ -3817,6 +4003,25 @@ function bokRate0TableHTML(rows) {
       + `<td class="mono">${escapeHtml(e.biz)}</td>`
       + `<td>${escapeHtml(e.cur)}</td>`
       + `<td><span class="pill warn">${escapeHtml(e.why)}</span></td>`
+      + `</tr>`;
+  }
+  return head + body + '</tbody>';
+}
+
+function bokLenTableHTML(rows, hasSpec) {
+  const head = `<thead><tr><th>Excel Row</th><th>Transaction No</th><th>Col</th><th>Field</th><th class="num">Length</th><th class="num">Max</th><th>Value</th></tr></thead>`;
+  if (!hasSpec) return head + bokNoneRow(7, 'No field-length spec for this report type.');
+  if (!rows.length) return head + bokNoneRow(7, 'None — every value fits its BOK field length.');
+  let body = '<tbody>';
+  for (const e of rows) {
+    body += `<tr>`
+      + `<td class="mono">${e.row}</td>`
+      + `<td class="mono">${escapeHtml(e.biz)}</td>`
+      + `<td class="mono">${escapeHtml(e.col)}</td>`
+      + `<td>${escapeHtml(e.field)} <span style="color:var(--muted);">(field ${e.no})</span></td>`
+      + `<td class="num mono" style="color:var(--bad);">${e.len}</td>`
+      + `<td class="num mono">${e.max}</td>`
+      + `<td class="mono">${escapeHtml(e.value)}</td>`
       + `</tr>`;
   }
   return head + body + '</tbody>';
@@ -3903,6 +4108,7 @@ function downloadBokReport() {
   res.jErr.forEach(e => errRows.add(e.row));
   res.tErr.forEach(e => errRows.add(e.row));
   res.rate0.forEach(e => errRows.add(e.row));
+  (res.lenErr || []).forEach(e => errRows.add(e.row));
 
   const summary = [
     [`BOK ${t.id} — USD Conversion Verification (${t.flow})`],
@@ -3916,6 +4122,7 @@ function downloadBokReport() {
     [`${c1.name} errors (${f1}, >${Math.round(c1.tol * 100)}% off)`, res.jErr.length],
     [`${c2.name} errors (${f2}, >${Math.round(c2.tol * 100)}% off)`, res.tErr.length],
     ['Rate = 0 open items', res.rate0.length],
+    ['Field-length errors (value longer than BOK spec)', (res.lenErr || []).length],
     ['Watch list (within tol, >2% off)', res.jSoft.length],
   ];
   const sSheet = XLSX.utils.aoa_to_sheet(summary);
@@ -3927,9 +4134,18 @@ function downloadBokReport() {
   res.jErr.forEach(e => errData.push([c1.name, e.row, e.biz, e.cur, e.entered, e.correct, e.why]));
   res.tErr.forEach(e => errData.push([c2.name, e.row, e.biz, e.cur, e.entered, e.correct, e.why]));
   res.rate0.forEach(e => errData.push(['Rate = 0', e.row, e.biz, e.cur, '', '', e.why]));
+  (res.lenErr || []).forEach(e => errData.push(['Field length', e.row, e.biz, '', e.len, e.max, e.why]));
   const eSheet = XLSX.utils.aoa_to_sheet(errData);
   eSheet['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 26 }, { wch: 8 }, { wch: 16 }, { wch: 16 }, { wch: 40 }];
   XLSX.utils.book_append_sheet(out, eSheet, 'Errors');
+
+  if ((res.lenErr || []).length) {
+    const lHeader = ['Excel Row', 'Transaction No', 'Column', 'Field No', 'Field', 'Length', 'Max', 'Value'];
+    const lData = [lHeader, ...res.lenErr.map(e => [e.row, e.biz, e.col, e.no, e.field, e.len, e.max, e.value])];
+    const lSheet = XLSX.utils.aoa_to_sheet(lData);
+    lSheet['!cols'] = [{ wch: 10 }, { wch: 24 }, { wch: 8 }, { wch: 8 }, { wch: 24 }, { wch: 8 }, { wch: 6 }, { wch: 24 }];
+    XLSX.utils.book_append_sheet(out, lSheet, 'Field lengths');
+  }
 
   if (res.jSoft.length) {
     const wHeader = ['Excel Row', 'Transaction No', 'Currency', 'Entered (in file)', 'Exact formula', 'Deviation'];
@@ -4055,6 +4271,9 @@ document.getElementById('reconSearch').addEventListener('input', () => {
 });
 document.getElementById('reconStatusFilter').addEventListener('change', () => {
   if (state.results) renderReconTable(state.results.txnResults);
+});
+document.getElementById('dailySentSearch').addEventListener('input', () => {
+  if (state.results) renderDailySent(state.results.dailySent);
 });
 
 // Exceptions row-selection (delegated — #excTable persists across re-renders)
