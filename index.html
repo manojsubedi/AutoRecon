@@ -2612,11 +2612,26 @@ function reconcile(workbook) {
     const ledger = ccy ? `${partner} - ${ccy}` : partner;
     const key = dayKey + '|' + ledger;
     if (!dailyAgg.has(key)) {
-      dailyAgg.set(key, { dayKey, _date: d, ledger, partner, ccy, sent: 0, txnCount: 0 });
+      dailyAgg.set(key, { dayKey, _date: d, ledger, partner, ccy, sent: 0, txnCount: 0, items: [] });
     }
     const a = dailyAgg.get(key);
     a.sent += r.settleAmt;
     a.txnCount++;
+    // Keep the underlying TXNDetails rows so the tab can drill down to each txn.
+    a.items.push({
+      created: r.createdDate,
+      merchant: r.merchant,
+      txnId: r.merchantTxnId || r.partnerTxnId || r.num,
+      collAmt: r.collAmt,
+      collCcy: r.collCcy,
+      sc: r.sc,
+      settleAmt: r.settleAmt,
+      status: r.txnStatus,
+    });
+  }
+  // Order each group's detail rows by time of day.
+  for (const a of dailyAgg.values()) {
+    a.items.sort((x, y) => (parseToDate(x.created) || 0) - (parseToDate(y.created) || 0));
   }
   const dailySent = [...dailyAgg.values()].sort((a, b) =>
     (a._date - b._date) || a.ledger.localeCompare(b.ledger));
@@ -3026,7 +3041,7 @@ function renderDailySent(rows) {
   });
 
   if (!filtered.length) {
-    table.innerHTML = `<tbody><tr><td colspan="4" style="text-align:center;padding:48px;color:var(--ink-3);">No daily sent rows${(q || partner) ? ' match your filter' : ''}.</td></tr></tbody>`;
+    table.innerHTML = `<tbody><tr><td colspan="5" style="text-align:center;padding:48px;color:var(--ink-3);">No daily sent rows${(q || partner) ? ' match your filter' : ''}.</td></tr></tbody>`;
     return;
   }
 
@@ -3040,18 +3055,25 @@ function renderDailySent(rows) {
 
   table.innerHTML = `
     <thead><tr>
-      <th class="th-help" title="Day the transactions were created (created_date), one bucket per calendar day.">Date</th>
+      <th class="th-help" title="Day the transactions were created (created_date), one bucket per calendar day. Click a row to see the individual TXNDetails transactions.">Date</th>
       <th class="th-help" title="Payout partner combined with its settlement currency — the ledger the funds were sent to.">Partner Ledger</th>
       <th class="num th-help" title="Sum of settlement_amount for this partner ledger on this day — the amount actually sent to the partner, in its settlement currency.">Sent Amount</th>
+      <th class="num th-help" title="Number of TXNDetails transactions behind this figure.">Txns</th>
       <th class="th-help" title="partner_settlement_ccy — the currency the partner was settled in.">Currency</th>
     </tr></thead>
     <tbody>
-      ${filtered.map(r => `
-        <tr>
-          <td class="date-cell">${escapeHtml(r.dayKey)}</td>
+      ${filtered.map((r, i) => `
+        <tr class="ds-row" data-idx="${i}" style="cursor:pointer;">
+          <td class="date-cell"><span class="ds-caret" style="display:inline-block;width:14px;color:var(--ink-3);">▸</span>${escapeHtml(r.dayKey)}</td>
           <td>${escapeHtml(r.ledger)}</td>
           <td class="num mono">${fmt(r.sent, 2)}</td>
+          <td class="num mono">${fmt(r.txnCount)}</td>
           <td class="mono" style="font-size:12px;color:var(--ink-3);">${escapeHtml(r.ccy || '—')}</td>
+        </tr>
+        <tr class="ds-detail" id="ds-detail-${i}" hidden>
+          <td colspan="5" style="padding:0;background:var(--bg-2, #fafafa);">
+            ${renderDailySentDetail(r)}
+          </td>
         </tr>
       `).join('')}
     </tbody>
@@ -3060,9 +3082,40 @@ function renderDailySent(rows) {
         <td>Total</td>
         <td></td>
         <td class="num mono">${escapeHtml(totalCells)}</td>
+        <td class="num mono">${fmt(filtered.reduce((s, r) => s + r.txnCount, 0))}</td>
         <td></td>
       </tr>
     </tfoot>
+  `;
+}
+
+// Nested detail: the individual TXNDetails transactions behind one daily-sent row.
+function renderDailySentDetail(r) {
+  return `
+    <table class="summary-table" style="margin:0;font-size:12px;box-shadow:none;">
+      <thead><tr>
+        <th title="created_date from TXNDetails">Created</th>
+        <th>Merchant</th>
+        <th title="merchant_txn_id / partner_txn_id">Txn ID</th>
+        <th class="num" title="collection_amount from TXNDetails">Collection</th>
+        <th class="num" title="service_charge from TXNDetails">SC</th>
+        <th class="num" title="settlement_amount from TXNDetails — amount sent to the partner">Sent</th>
+        <th title="txn_status from TXNDetails">Status</th>
+      </tr></thead>
+      <tbody>
+        ${r.items.map(it => `
+          <tr>
+            <td class="date-cell">${escapeHtml(fmtDate(it.created))}</td>
+            <td>${escapeHtml(it.merchant || '—')}</td>
+            <td class="mono" style="font-size:11px;">${escapeHtml(String(it.txnId ?? '—'))}</td>
+            <td class="num mono">${fmt(it.collAmt)} <span style="color:var(--ink-3);font-size:11px;">${escapeHtml(it.collCcy || '')}</span></td>
+            <td class="num mono">${fmt(it.sc)}</td>
+            <td class="num mono">${fmt(it.settleAmt, 2)}</td>
+            <td>${escapeHtml(it.status || '—')}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
   `;
 }
 
@@ -3659,11 +3712,11 @@ function downloadReport() {
   if (results.dailySent && results.dailySent.length) {
     const dsData = [
       ['Daily Sent Volume — one row per partner ledger (partner + settlement currency) per day. Sent Amount = sum of settlement_amount sent to the partner that day.'],
-      ['Date', 'Partner Ledger', 'Sent Amount', 'Currency'],
-      ...results.dailySent.map(r => [r.dayKey, r.ledger, r.sent, r.ccy]),
+      ['Date', 'Partner Ledger', 'Sent Amount', 'Txns', 'Currency'],
+      ...results.dailySent.map(r => [r.dayKey, r.ledger, r.sent, r.txnCount, r.ccy]),
     ];
     const dsSheet = XLSX.utils.aoa_to_sheet(dsData);
-    dsSheet['!cols'] = [{wch:14},{wch:28},{wch:18},{wch:10}];
+    dsSheet['!cols'] = [{wch:14},{wch:28},{wch:18},{wch:8},{wch:10}];
     XLSX.utils.book_append_sheet(out, dsSheet, 'Daily Sent');
   }
 
@@ -4288,6 +4341,16 @@ document.getElementById('dailySentSearch').addEventListener('input', () => {
 });
 document.getElementById('dailySentPartner').addEventListener('change', () => {
   if (state.results) renderDailySent(state.results.dailySent);
+});
+// Click a daily-sent row to expand/collapse its TXNDetails transactions.
+document.getElementById('dailySentTable').addEventListener('click', (e) => {
+  const row = e.target.closest('.ds-row');
+  if (!row) return;
+  const detail = document.getElementById('ds-detail-' + row.dataset.idx);
+  if (!detail) return;
+  detail.hidden = !detail.hidden;
+  const caret = row.querySelector('.ds-caret');
+  if (caret) caret.textContent = detail.hidden ? '▸' : '▾';
 });
 
 // Exceptions row-selection (delegated — #excTable persists across re-renders)
