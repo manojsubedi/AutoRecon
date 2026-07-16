@@ -1377,6 +1377,9 @@
         <p class="verify-intro">Daily sent volume — one row per <strong>partner ledger</strong> (partner + settlement currency) per day. <strong>Sent Amount</strong> is the total <code>settlement_amount</code> sent to the partner that day, in the partner's settlement currency.</p>
         <div class="filter-bar">
           <input type="search" id="dailySentSearch" placeholder="Search by partner ledger or currency…">
+          <select id="dailySentPartner">
+            <option value="">All partner ledgers</option>
+          </select>
         </div>
         <div class="table-wrap">
           <table class="summary-table" id="dailySentTable"></table>
@@ -2996,12 +2999,16 @@ function renderPartnerSummary(summary) {
 
 // Daily sent volume — mirrors the shared "Daily Sent Volume" report:
 // Date · Partner Ledger · Sent Amount · Currency (one row per partner-ledger per day).
-const DS_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function fmtDsDate(d) {
-  if (!d) return '—';
-  const day = String(d.getDate()).padStart(2, '0');
-  const yy = String(d.getFullYear()).slice(-2);
-  return `${day}-${DS_MONTHS[d.getMonth()]}-${yy}`;
+// Populate the partner-ledger dropdown from the data (like the Excel's ledger dropdown).
+function populateDailySentPartners(rows) {
+  const sel = document.getElementById('dailySentPartner');
+  if (!sel) return;
+  const current = sel.value;
+  const ledgers = [...new Set(rows.map(r => r.ledger))].sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">All partner ledgers</option>' +
+    ledgers.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  // Keep the current selection if it still exists in the new data.
+  if (ledgers.includes(current)) sel.value = current;
 }
 
 function renderDailySent(rows) {
@@ -3009,13 +3016,17 @@ function renderDailySent(rows) {
   const badge = document.getElementById('dailySentCount');
   if (badge) badge.textContent = rows.length;
 
+  populateDailySentPartners(rows);
   const q = (document.getElementById('dailySentSearch')?.value || '').toLowerCase();
-  const filtered = q
-    ? rows.filter(r => (r.ledger + ' ' + r.ccy).toLowerCase().includes(q))
-    : rows;
+  const partner = document.getElementById('dailySentPartner')?.value || '';
+  const filtered = rows.filter(r => {
+    if (partner && r.ledger !== partner) return false;
+    if (q && !(r.ledger + ' ' + r.ccy).toLowerCase().includes(q)) return false;
+    return true;
+  });
 
   if (!filtered.length) {
-    table.innerHTML = `<tbody><tr><td colspan="4" style="text-align:center;padding:48px;color:var(--ink-3);">No daily sent rows${q ? ' match your search' : ''}.</td></tr></tbody>`;
+    table.innerHTML = `<tbody><tr><td colspan="4" style="text-align:center;padding:48px;color:var(--ink-3);">No daily sent rows${(q || partner) ? ' match your filter' : ''}.</td></tr></tbody>`;
     return;
   }
 
@@ -3037,7 +3048,7 @@ function renderDailySent(rows) {
     <tbody>
       ${filtered.map(r => `
         <tr>
-          <td class="date-cell">${fmtDsDate(r._date)}</td>
+          <td class="date-cell">${escapeHtml(r.dayKey)}</td>
           <td>${escapeHtml(r.ledger)}</td>
           <td class="num mono">${fmt(r.sent, 2)}</td>
           <td class="mono" style="font-size:12px;color:var(--ink-3);">${escapeHtml(r.ccy || '—')}</td>
@@ -3649,7 +3660,7 @@ function downloadReport() {
     const dsData = [
       ['Daily Sent Volume — one row per partner ledger (partner + settlement currency) per day. Sent Amount = sum of settlement_amount sent to the partner that day.'],
       ['Date', 'Partner Ledger', 'Sent Amount', 'Currency'],
-      ...results.dailySent.map(r => [fmtDsDate(r._date), r.ledger, r.sent, r.ccy]),
+      ...results.dailySent.map(r => [r.dayKey, r.ledger, r.sent, r.ccy]),
     ];
     const dsSheet = XLSX.utils.aoa_to_sheet(dsData);
     dsSheet['!cols'] = [{wch:14},{wch:28},{wch:18},{wch:10}];
@@ -4273,6 +4284,9 @@ document.getElementById('reconStatusFilter').addEventListener('change', () => {
   if (state.results) renderReconTable(state.results.txnResults);
 });
 document.getElementById('dailySentSearch').addEventListener('input', () => {
+  if (state.results) renderDailySent(state.results.dailySent);
+});
+document.getElementById('dailySentPartner').addEventListener('change', () => {
   if (state.results) renderDailySent(state.results.dailySent);
 });
 
